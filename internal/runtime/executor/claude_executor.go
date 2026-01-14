@@ -178,20 +178,13 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 			log.Debugf("request error, error status: %d, error body: %s", httpResp.StatusCode, summarizeErrorBody(httpResp.Header.Get("Content-Type"), b))
 			_ = httpResp.Body.Close()
 
-			if attempt == 0 && isClaudeThinkingInvalidSignatureError(httpResp.StatusCode, b) {
-				log.Infof("Detected Claude thinking signature error. Attempting recovery. sessionID=%s", sessionID)
-				originalBody := bodyForUpstream
-				sig, ok := recordInvalidThinkingSignatureFromError(sessionID, originalBody, b)
-				if ok {
-					log.Debugf("Recorded invalid signature: %s", sig)
-					bodyForUpstream, _ = sanitizeClaudePayloadForInvalidThinking(originalBody, sessionID)
-				} else {
-					log.Debugf("Failed to record specific signature, falling back to full strip")
-					bodyForUpstream, _ = stripClaudeThinkingBlocksForRetry(originalBody)
+			if attempt == 0 {
+				if newPayload, shouldRetry := handleThinkingErrorRecovery(sessionID, bodyForUpstream, b, httpResp.StatusCode); shouldRetry {
+					log.Infof("Detected Claude thinking signature error. Attempting recovery. sessionID=%s", sessionID)
+					bodyForUpstream = newPayload
+					continue
 				}
-				continue // Retry
 			}
-
 			return resp, statusErr{code: httpResp.StatusCode, msg: string(b)}
 		}
 
@@ -327,20 +320,13 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 			log.Debugf("request error, error status: %d, error body: %s", httpResp.StatusCode, summarizeErrorBody(httpResp.Header.Get("Content-Type"), b))
 			_ = httpResp.Body.Close()
 
-			if attempt == 0 && isClaudeThinkingInvalidSignatureError(httpResp.StatusCode, b) {
-				log.Infof("Detected Claude thinking signature error in stream. Attempting recovery. sessionID=%s", sessionID)
-				originalBody := bodyForUpstream
-				sig, ok := recordInvalidThinkingSignatureFromError(sessionID, originalBody, b)
-				if ok {
-					log.Debugf("Recorded invalid signature: %s", sig)
-					bodyForUpstream, _ = sanitizeClaudePayloadForInvalidThinking(originalBody, sessionID)
-				} else {
-					log.Debugf("Failed to record specific signature, falling back to full strip")
-					bodyForUpstream, _ = stripClaudeThinkingBlocksForRetry(originalBody)
+			if attempt == 0 {
+				if newPayload, shouldRetry := handleThinkingErrorRecovery(sessionID, bodyForUpstream, b, httpResp.StatusCode); shouldRetry {
+					log.Infof("Detected Claude thinking signature error in stream. Attempting recovery. sessionID=%s", sessionID)
+					bodyForUpstream = newPayload
+					continue
 				}
-				continue // Retry
 			}
-
 			return nil, statusErr{code: httpResp.StatusCode, msg: string(b)}
 		}
 		break // Success

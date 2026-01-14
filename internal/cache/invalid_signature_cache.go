@@ -85,14 +85,7 @@ func IsInvalidSignature(sessionID, signature string) bool {
 	sc.mu.RLock()
 	ts, exists := sc.entries[signature]
 	sc.mu.RUnlock()
-
-	if !exists {
-		return false
-	}
-	if time.Since(ts) > InvalidSignatureCacheTTL {
-		return false
-	}
-	return true
+	return exists && time.Since(ts) <= InvalidSignatureCacheTTL
 }
 
 // ClearInvalidSignatureCache clears blacklist for session or all.
