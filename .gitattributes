@@ -1,0 +1,10 @@
+# Fork-specific files - preserve on upstream sync (merge=ours)
+
+# Documentation
+docs/done/** merge=ours
+
+# Thinking error handling feature
+internal/cache/invalid_signature_cache.go merge=ours
+internal/cache/invalid_signature_cache_test.go merge=ours
+internal/runtime/executor/claude_thinking_helpers.go merge=ours
+internal/runtime/executor/claude_thinking_helpers_test.go merge=ours

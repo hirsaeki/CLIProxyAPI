@@ -27,6 +27,7 @@ auths/*
 
 # Documentation
 docs/*
+!docs/done/
 AGENTS.md
 CLAUDE.md
 GEMINI.md
