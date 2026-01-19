@@ -3,6 +3,9 @@
 # Documentation
 docs/done/** merge=ours
 
+# Workflows
+.github/workflows/docker-image.yml merge=ours
+
 # Thinking error handling feature
 internal/cache/invalid_signature_cache.go merge=ours
 internal/cache/invalid_signature_cache_test.go merge=ours
