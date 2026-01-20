@@ -253,15 +253,26 @@ func (e *AntigravityExecutor) executeClaudeNonStream(ctx context.Context, auth *
 	if len(opts.OriginalRequest) > 0 {
 		originalPayload = bytes.Clone(opts.OriginalRequest)
 	}
-	originalTranslated := sdktranslator.TranslateRequest(from, to, baseModel, originalPayload, true)
-	translated := sdktranslator.TranslateRequest(from, to, baseModel, bytes.Clone(req.Payload), true)
 
-	translated, err = thinking.ApplyThinking(translated, req.Model, from.String(), to.String(), e.Identifier())
+	// --- Start Thinking Error Recovery Hook ---
+	sessionID := deriveSessionIDFromClaudeMessages(originalPayload)
+	originalPayload, _ = sanitizeAntigravityPayloadForInvalidThinking(originalPayload, sessionID)
+	// --- End Thinking Error Recovery Hook ---
+
+	translatePayload := func(payload []byte) ([]byte, error) {
+		origTranslated := sdktranslator.TranslateRequest(from, to, baseModel, payload, true)
+		result := sdktranslator.TranslateRequest(from, to, baseModel, bytes.Clone(payload), true)
+		result, err := thinking.ApplyThinking(result, req.Model, from.String(), to.String(), e.Identifier())
+		if err != nil {
+			return nil, err
+		}
+		return applyPayloadConfigWithRoot(e.cfg, baseModel, "antigravity", "request", result, origTranslated), nil
+	}
+
+	translated, err := translatePayload(originalPayload)
 	if err != nil {
 		return resp, err
 	}
-
-	translated = applyPayloadConfigWithRoot(e.cfg, baseModel, "antigravity", "request", translated, originalTranslated)
 
 	baseURLs := antigravityBaseURLFallbackOrder(auth)
 	httpClient := newProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
@@ -270,7 +281,17 @@ func (e *AntigravityExecutor) executeClaudeNonStream(ctx context.Context, auth *
 	var lastBody []byte
 	var lastErr error
 
-	for idx, baseURL := range baseURLs {
+	// Outer loop for thinking error recovery (max 1 retry)
+	for thinkingRetry := 0; thinkingRetry < 2; thinkingRetry++ {
+		if thinkingRetry > 0 {
+			// Re-translate after payload modification
+			translated, err = translatePayload(originalPayload)
+			if err != nil {
+				return resp, err
+			}
+		}
+
+		for idx, baseURL := range baseURLs {
 		httpReq, errReq := e.buildRequest(ctx, auth, token, baseModel, translated, true, opts.Alt, baseURL)
 		if errReq != nil {
 			err = errReq
@@ -327,6 +348,17 @@ func (e *AntigravityExecutor) executeClaudeNonStream(ctx context.Context, auth *
 				log.Debugf("antigravity executor: rate limited on base url %s, retrying with fallback base url: %s", baseURL, baseURLs[idx+1])
 				continue
 			}
+
+			// --- Start Thinking Error Recovery ---
+			if thinkingRetry == 0 {
+				if newPayload, shouldRetry := handleAntigravityThinkingErrorRecovery(sessionID, originalPayload, bodyBytes, httpResp.StatusCode); shouldRetry {
+					log.Infof("Antigravity: Detected thinking signature error. Attempting recovery. sessionID=%s", sessionID)
+					originalPayload = newPayload
+					break // Break inner baseURL loop to retry with modified payload
+				}
+			}
+			// --- End Thinking Error Recovery ---
+
 			sErr := statusErr{code: httpResp.StatusCode, msg: string(bodyBytes)}
 			if httpResp.StatusCode == http.StatusTooManyRequests {
 				if retryAfter, parseErr := parseRetryDelay(bodyBytes); parseErr == nil && retryAfter != nil {
@@ -388,13 +420,14 @@ func (e *AntigravityExecutor) executeClaudeNonStream(ctx context.Context, auth *
 		resp = cliproxyexecutor.Response{Payload: e.convertStreamToNonStream(buffer.Bytes())}
 
 		reporter.publish(ctx, parseAntigravityUsage(resp.Payload))
-		var param any
-		converted := sdktranslator.TranslateNonStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), translated, resp.Payload, &param)
-		resp = cliproxyexecutor.Response{Payload: []byte(converted)}
-		reporter.ensurePublished(ctx)
+			var param any
+			converted := sdktranslator.TranslateNonStream(ctx, to, from, req.Model, bytes.Clone(opts.OriginalRequest), translated, resp.Payload, &param)
+			resp = cliproxyexecutor.Response{Payload: []byte(converted)}
+			reporter.ensurePublished(ctx)
 
-		return resp, nil
-	}
+			return resp, nil
+		} // end baseURL loop
+	} // end thinkingRetry loop
 
 	switch {
 	case lastStatus != 0:
@@ -619,15 +652,26 @@ func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 	if len(opts.OriginalRequest) > 0 {
 		originalPayload = bytes.Clone(opts.OriginalRequest)
 	}
-	originalTranslated := sdktranslator.TranslateRequest(from, to, baseModel, originalPayload, true)
-	translated := sdktranslator.TranslateRequest(from, to, baseModel, bytes.Clone(req.Payload), true)
 
-	translated, err = thinking.ApplyThinking(translated, req.Model, from.String(), to.String(), e.Identifier())
+	// --- Start Thinking Error Recovery Hook ---
+	sessionID := deriveSessionIDFromClaudeMessages(originalPayload)
+	originalPayload, _ = sanitizeAntigravityPayloadForInvalidThinking(originalPayload, sessionID)
+	// --- End Thinking Error Recovery Hook ---
+
+	translatePayloadStream := func(payload []byte) ([]byte, error) {
+		origTranslated := sdktranslator.TranslateRequest(from, to, baseModel, payload, true)
+		result := sdktranslator.TranslateRequest(from, to, baseModel, bytes.Clone(payload), true)
+		result, err := thinking.ApplyThinking(result, req.Model, from.String(), to.String(), e.Identifier())
+		if err != nil {
+			return nil, err
+		}
+		return applyPayloadConfigWithRoot(e.cfg, baseModel, "antigravity", "request", result, origTranslated), nil
+	}
+
+	translated, err := translatePayloadStream(originalPayload)
 	if err != nil {
 		return nil, err
 	}
-
-	translated = applyPayloadConfigWithRoot(e.cfg, baseModel, "antigravity", "request", translated, originalTranslated)
 
 	baseURLs := antigravityBaseURLFallbackOrder(auth)
 	httpClient := newProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
@@ -636,13 +680,23 @@ func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 	var lastBody []byte
 	var lastErr error
 
-	for idx, baseURL := range baseURLs {
-		httpReq, errReq := e.buildRequest(ctx, auth, token, baseModel, translated, true, opts.Alt, baseURL)
-		if errReq != nil {
-			err = errReq
-			return nil, err
+	// Outer loop for thinking error recovery (max 1 retry)
+	for thinkingRetry := 0; thinkingRetry < 2; thinkingRetry++ {
+		if thinkingRetry > 0 {
+			// Re-translate after payload modification
+			translated, err = translatePayloadStream(originalPayload)
+			if err != nil {
+				return nil, err
+			}
 		}
-		httpResp, errDo := httpClient.Do(httpReq)
+
+		for idx, baseURL := range baseURLs {
+			httpReq, errReq := e.buildRequest(ctx, auth, token, baseModel, translated, true, opts.Alt, baseURL)
+			if errReq != nil {
+				err = errReq
+				return nil, err
+			}
+			httpResp, errDo := httpClient.Do(httpReq)
 		if errDo != nil {
 			recordAPIResponseError(ctx, e.cfg, errDo)
 			if errors.Is(errDo, context.Canceled) || errors.Is(errDo, context.DeadlineExceeded) {
@@ -692,6 +746,17 @@ func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 				log.Debugf("antigravity executor: rate limited on base url %s, retrying with fallback base url: %s", baseURL, baseURLs[idx+1])
 				continue
 			}
+
+			// --- Start Thinking Error Recovery ---
+			if thinkingRetry == 0 {
+				if newPayload, shouldRetry := handleAntigravityThinkingErrorRecovery(sessionID, originalPayload, bodyBytes, httpResp.StatusCode); shouldRetry {
+					log.Infof("Antigravity Stream: Detected thinking signature error. Attempting recovery. sessionID=%s", sessionID)
+					originalPayload = newPayload
+					break // Break inner baseURL loop to retry with modified payload
+				}
+			}
+			// --- End Thinking Error Recovery ---
+
 			sErr := statusErr{code: httpResp.StatusCode, msg: string(bodyBytes)}
 			if httpResp.StatusCode == http.StatusTooManyRequests {
 				if retryAfter, parseErr := parseRetryDelay(bodyBytes); parseErr == nil && retryAfter != nil {
@@ -702,7 +767,7 @@ func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 			return nil, err
 		}
 
-		out := make(chan cliproxyexecutor.StreamChunk)
+			out := make(chan cliproxyexecutor.StreamChunk)
 		stream = out
 		go func(resp *http.Response) {
 			defer close(out)
@@ -748,8 +813,9 @@ func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 				reporter.ensurePublished(ctx)
 			}
 		}(httpResp)
-		return stream, nil
-	}
+			return stream, nil
+		} // end baseURL loop
+	} // end thinkingRetry loop
 
 	switch {
 	case lastStatus != 0:
