@@ -113,7 +113,7 @@ func (e *AntigravityExecutor) Execute(ctx context.Context, auth *cliproxyauth.Au
 	isClaude := strings.Contains(strings.ToLower(baseModel), "claude")
 
 	if isClaude || strings.Contains(baseModel, "gemini-3-pro") {
-		return e.executeClaudeNonStream(ctx, auth, req, opts)
+		return e.executeClaudeNonStreamWithRecovery(ctx, auth, req, opts)
 	}
 
 	token, updatedAuth, errToken := e.ensureAccessToken(ctx, auth)
@@ -599,6 +599,19 @@ func (e *AntigravityExecutor) convertStreamToNonStream(stream []byte) []byte {
 
 // ExecuteStream performs a streaming request to the Antigravity API.
 func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (stream <-chan cliproxyexecutor.StreamChunk, err error) {
+	baseModel := thinking.ParseSuffix(req.Model).ModelName
+	isClaude := strings.Contains(strings.ToLower(baseModel), "claude")
+
+	// Fork enhancement: wrap Claude models with thinking error recovery
+	if isClaude || strings.Contains(baseModel, "gemini-3-pro") {
+		return e.executeClaudeStreamWithRecovery(ctx, auth, req, opts)
+	}
+
+	return e.executeStreamInternal(ctx, auth, req, opts)
+}
+
+// executeStreamInternal is the internal implementation of ExecuteStream.
+func (e *AntigravityExecutor) executeStreamInternal(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (stream <-chan cliproxyexecutor.StreamChunk, err error) {
 	baseModel := thinking.ParseSuffix(req.Model).ModelName
 
 	ctx = context.WithValue(ctx, "alt", "")
