@@ -2,6 +2,9 @@
 
 ## Completed Features
 
+- **Upstream Merge & Thinking Recovery Reintegration** (2026-01-24)
+  - See: [docs/done/upstream-merge-thinking-recovery-reintegration.md](./docs/done/upstream-merge-thinking-recovery-reintegration.md)
+
 - **Antigravity Thinking Error Recovery**
   - See: [docs/done/antigravity-thinking-error-recovery.md](./docs/done/antigravity-thinking-error-recovery.md)
 
