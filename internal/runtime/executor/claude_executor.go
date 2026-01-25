@@ -129,80 +129,73 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 		bodyForUpstream = applyClaudeToolPrefix(body, claudeToolPrefix)
 	}
 
-	// --- Start Thinking Error Recovery Hook ---
-	sessionID := deriveSessionIDFromClaudeMessages(bodyForTranslation)
-	bodyForUpstream, _ = sanitizeClaudePayloadForInvalidThinking(bodyForUpstream, sessionID)
-	// --- End Thinking Error Recovery Hook ---
+	// --- Start Thinking Error Recovery Hook (fork) ---
+	sessionID, bodyForUpstream := claudeThinkingPreRequest(bodyForUpstream, bodyForTranslation)
+	// --- End Thinking Error Recovery Hook (fork) ---
 
 	url := fmt.Sprintf("%s/v1/messages?beta=true", baseURL)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyForUpstream))
+	if err != nil {
+		return resp, err
+	}
+	applyClaudeHeaders(httpReq, auth, apiKey, false, extraBetas)
+	var authID, authLabel, authType, authValue string
+	if auth != nil {
+		authID = auth.ID
+		authLabel = auth.Label
+		authType, authValue = auth.AccountInfo()
+	}
+	recordAPIRequest(ctx, e.cfg, upstreamRequestLog{
+		URL:       url,
+		Method:    http.MethodPost,
+		Headers:   httpReq.Header.Clone(),
+		Body:      bodyForUpstream,
+		Provider:  e.Identifier(),
+		AuthID:    authID,
+		AuthLabel: authLabel,
+		AuthType:  authType,
+		AuthValue: authValue,
+	})
 
 	httpClient := newProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
-	var httpResp *http.Response
-	var data []byte
-
-	// Retry loop (max 1 retry)
-	for attempt := 0; attempt < 2; attempt++ {
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyForUpstream))
-		if err != nil {
-			return resp, err
-		}
-		applyClaudeHeaders(httpReq, auth, apiKey, false, extraBetas)
-		var authID, authLabel, authType, authValue string
-		if auth != nil {
-			authID = auth.ID
-			authLabel = auth.Label
-			authType, authValue = auth.AccountInfo()
-		}
-		recordAPIRequest(ctx, e.cfg, upstreamRequestLog{
-			URL:       url,
-			Method:    http.MethodPost,
-			Headers:   httpReq.Header.Clone(),
-			Body:      bodyForUpstream,
-			Provider:  e.Identifier(),
-			AuthID:    authID,
-			AuthLabel: authLabel,
-			AuthType:  authType,
-			AuthValue: authValue,
-		})
-
-		httpResp, err = httpClient.Do(httpReq)
-		if err != nil {
-			recordAPIResponseError(ctx, e.cfg, err)
-			return resp, err
-		}
-		recordAPIResponseMetadata(ctx, e.cfg, httpResp.StatusCode, httpResp.Header.Clone())
-
-		if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
-			b, _ := io.ReadAll(httpResp.Body)
-			appendAPIResponseChunk(ctx, e.cfg, b)
-			logWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, summarizeErrorBody(httpResp.Header.Get("Content-Type"), b))
-			_ = httpResp.Body.Close()
-
-			if attempt == 0 {
-				if newPayload, shouldRetry := handleThinkingErrorRecovery(sessionID, bodyForUpstream, b, httpResp.StatusCode); shouldRetry {
-					logWithRequestID(ctx).Infof("Detected Claude thinking signature error. Attempting recovery. sessionID=%s", sessionID)
-					bodyForUpstream = newPayload
-					continue
-				}
-			}
-			return resp, statusErr{code: httpResp.StatusCode, msg: string(b)}
-		}
-
-		decodedBody, err := decodeResponseBody(httpResp.Body, httpResp.Header.Get("Content-Encoding"))
-		if err != nil {
-			recordAPIResponseError(ctx, e.cfg, err)
-			_ = httpResp.Body.Close()
-			return resp, err
-		}
-		data, err = io.ReadAll(decodedBody)
-		_ = decodedBody.Close()
-		if err != nil {
-			recordAPIResponseError(ctx, e.cfg, err)
-			return resp, err
-		}
-		appendAPIResponseChunk(ctx, e.cfg, data)
-		break // Success
+	// --- Start Thinking Error Recovery Hook (fork) ---
+	httpClient = wrapHTTPClientWithThinkingRecovery(httpClient, sessionID, bodyForUpstream, ctx)
+	// --- End Thinking Error Recovery Hook (fork) ---
+	httpResp, err := httpClient.Do(httpReq)
+	if err != nil {
+		recordAPIResponseError(ctx, e.cfg, err)
+		return resp, err
 	}
+	recordAPIResponseMetadata(ctx, e.cfg, httpResp.StatusCode, httpResp.Header.Clone())
+	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
+		b, _ := io.ReadAll(httpResp.Body)
+		appendAPIResponseChunk(ctx, e.cfg, b)
+		logWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, summarizeErrorBody(httpResp.Header.Get("Content-Type"), b))
+		err = statusErr{code: httpResp.StatusCode, msg: string(b)}
+		if errClose := httpResp.Body.Close(); errClose != nil {
+			log.Errorf("response body close error: %v", errClose)
+		}
+		return resp, err
+	}
+	decodedBody, err := decodeResponseBody(httpResp.Body, httpResp.Header.Get("Content-Encoding"))
+	if err != nil {
+		recordAPIResponseError(ctx, e.cfg, err)
+		if errClose := httpResp.Body.Close(); errClose != nil {
+			log.Errorf("response body close error: %v", errClose)
+		}
+		return resp, err
+	}
+	defer func() {
+		if errClose := decodedBody.Close(); errClose != nil {
+			log.Errorf("response body close error: %v", errClose)
+		}
+	}()
+	data, err := io.ReadAll(decodedBody)
+	if err != nil {
+		recordAPIResponseError(ctx, e.cfg, err)
+		return resp, err
+	}
+	appendAPIResponseChunk(ctx, e.cfg, data)
 	if stream {
 		lines := bytes.Split(data, []byte("\n"))
 		for _, line := range lines {
@@ -275,64 +268,52 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 		bodyForUpstream = applyClaudeToolPrefix(body, claudeToolPrefix)
 	}
 
-	// --- Start Thinking Error Recovery Hook ---
-	sessionID := deriveSessionIDFromClaudeMessages(bodyForTranslation)
-	bodyForUpstream, _ = sanitizeClaudePayloadForInvalidThinking(bodyForUpstream, sessionID)
-	// --- End Thinking Error Recovery Hook ---
+	// --- Start Thinking Error Recovery Hook (fork) ---
+	sessionID, bodyForUpstream := claudeThinkingPreRequest(bodyForUpstream, bodyForTranslation)
+	// --- End Thinking Error Recovery Hook (fork) ---
 
 	url := fmt.Sprintf("%s/v1/messages?beta=true", baseURL)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyForUpstream))
+	if err != nil {
+		return nil, err
+	}
+	applyClaudeHeaders(httpReq, auth, apiKey, true, extraBetas)
+	var authID, authLabel, authType, authValue string
+	if auth != nil {
+		authID = auth.ID
+		authLabel = auth.Label
+		authType, authValue = auth.AccountInfo()
+	}
+	recordAPIRequest(ctx, e.cfg, upstreamRequestLog{
+		URL:       url,
+		Method:    http.MethodPost,
+		Headers:   httpReq.Header.Clone(),
+		Body:      bodyForUpstream,
+		Provider:  e.Identifier(),
+		AuthID:    authID,
+		AuthLabel: authLabel,
+		AuthType:  authType,
+		AuthValue: authValue,
+	})
 
 	httpClient := newProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
-	var httpResp *http.Response
-
-	// Retry loop (max 1 retry)
-	for attempt := 0; attempt < 2; attempt++ {
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyForUpstream))
-		if err != nil {
-			return nil, err
+	// --- Start Thinking Error Recovery Hook (fork) ---
+	httpClient = wrapHTTPClientWithThinkingRecovery(httpClient, sessionID, bodyForUpstream, ctx)
+	// --- End Thinking Error Recovery Hook (fork) ---
+	httpResp, err := httpClient.Do(httpReq)
+	if err != nil {
+		recordAPIResponseError(ctx, e.cfg, err)
+		return nil, err
+	}
+	recordAPIResponseMetadata(ctx, e.cfg, httpResp.StatusCode, httpResp.Header.Clone())
+	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
+		b, _ := io.ReadAll(httpResp.Body)
+		appendAPIResponseChunk(ctx, e.cfg, b)
+		logWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, summarizeErrorBody(httpResp.Header.Get("Content-Type"), b))
+		if errClose := httpResp.Body.Close(); errClose != nil {
+			log.Errorf("response body close error: %v", errClose)
 		}
-		applyClaudeHeaders(httpReq, auth, apiKey, true, extraBetas)
-		var authID, authLabel, authType, authValue string
-		if auth != nil {
-			authID = auth.ID
-			authLabel = auth.Label
-			authType, authValue = auth.AccountInfo()
-		}
-		recordAPIRequest(ctx, e.cfg, upstreamRequestLog{
-			URL:       url,
-			Method:    http.MethodPost,
-			Headers:   httpReq.Header.Clone(),
-			Body:      bodyForUpstream,
-			Provider:  e.Identifier(),
-			AuthID:    authID,
-			AuthLabel: authLabel,
-			AuthType:  authType,
-			AuthValue: authValue,
-		})
-
-		httpResp, err = httpClient.Do(httpReq)
-		if err != nil {
-			recordAPIResponseError(ctx, e.cfg, err)
-			return nil, err
-		}
-		recordAPIResponseMetadata(ctx, e.cfg, httpResp.StatusCode, httpResp.Header.Clone())
-
-		if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
-			b, _ := io.ReadAll(httpResp.Body)
-			appendAPIResponseChunk(ctx, e.cfg, b)
-			logWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, summarizeErrorBody(httpResp.Header.Get("Content-Type"), b))
-			_ = httpResp.Body.Close()
-
-			if attempt == 0 {
-				if newPayload, shouldRetry := handleThinkingErrorRecovery(sessionID, bodyForUpstream, b, httpResp.StatusCode); shouldRetry {
-					logWithRequestID(ctx).Infof("Detected Claude thinking signature error in stream. Attempting recovery. sessionID=%s", sessionID)
-					bodyForUpstream = newPayload
-					continue
-				}
-			}
-			return nil, statusErr{code: httpResp.StatusCode, msg: string(b)}
-		}
-		break // Success
+		return nil, statusErr{code: httpResp.StatusCode, msg: string(b)}
 	}
 	decodedBody, err := decodeResponseBody(httpResp.Body, httpResp.Header.Get("Content-Encoding"))
 	if err != nil {
