@@ -175,12 +175,12 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 		if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
 			b, _ := io.ReadAll(httpResp.Body)
 			appendAPIResponseChunk(ctx, e.cfg, b)
-			log.Debugf("request error, error status: %d, error body: %s", httpResp.StatusCode, summarizeErrorBody(httpResp.Header.Get("Content-Type"), b))
+			logWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, summarizeErrorBody(httpResp.Header.Get("Content-Type"), b))
 			_ = httpResp.Body.Close()
 
 			if attempt == 0 {
 				if newPayload, shouldRetry := handleThinkingErrorRecovery(sessionID, bodyForUpstream, b, httpResp.StatusCode); shouldRetry {
-					log.Infof("Detected Claude thinking signature error. Attempting recovery. sessionID=%s", sessionID)
+					logWithRequestID(ctx).Infof("Detected Claude thinking signature error. Attempting recovery. sessionID=%s", sessionID)
 					bodyForUpstream = newPayload
 					continue
 				}
@@ -320,12 +320,12 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 		if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
 			b, _ := io.ReadAll(httpResp.Body)
 			appendAPIResponseChunk(ctx, e.cfg, b)
-			log.Debugf("request error, error status: %d, error body: %s", httpResp.StatusCode, summarizeErrorBody(httpResp.Header.Get("Content-Type"), b))
+			logWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, summarizeErrorBody(httpResp.Header.Get("Content-Type"), b))
 			_ = httpResp.Body.Close()
 
 			if attempt == 0 {
 				if newPayload, shouldRetry := handleThinkingErrorRecovery(sessionID, bodyForUpstream, b, httpResp.StatusCode); shouldRetry {
-					log.Infof("Detected Claude thinking signature error in stream. Attempting recovery. sessionID=%s", sessionID)
+					logWithRequestID(ctx).Infof("Detected Claude thinking signature error in stream. Attempting recovery. sessionID=%s", sessionID)
 					bodyForUpstream = newPayload
 					continue
 				}
@@ -765,6 +765,11 @@ func applyClaudeToolPrefix(body []byte, prefix string) []byte {
 
 	if tools := gjson.GetBytes(body, "tools"); tools.Exists() && tools.IsArray() {
 		tools.ForEach(func(index, tool gjson.Result) bool {
+			// Skip built-in tools (web_search, code_execution, etc.) which have
+			// a "type" field and require their name to remain unchanged.
+			if tool.Get("type").Exists() && tool.Get("type").String() != "" {
+				return true
+			}
 			name := tool.Get("name").String()
 			if name == "" || strings.HasPrefix(name, prefix) {
 				return true
