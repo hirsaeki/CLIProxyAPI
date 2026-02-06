@@ -716,6 +716,20 @@ func GetOpenAIModels() []*ModelInfo {
 			SupportedParameters: []string{"tools"},
 			Thinking:            &ThinkingSupport{Levels: []string{"low", "medium", "high", "xhigh"}},
 		},
+		{
+			ID:                  "gpt-5.3-codex",
+			Object:              "model",
+			Created:             1770307200,
+			OwnedBy:             "openai",
+			Type:                "openai",
+			Version:             "gpt-5.3",
+			DisplayName:         "GPT 5.3 Codex",
+			Description:         "Stable version of GPT 5.3 Codex, The best model for coding and agentic tasks across domains.",
+			ContextLength:       400000,
+			MaxCompletionTokens: 128000,
+			SupportedParameters: []string{"tools"},
+			Thinking:            &ThinkingSupport{Levels: []string{"low", "medium", "high", "xhigh"}},
+		},
 	}
 }
 
@@ -803,6 +817,7 @@ func GetIFlowModels() []*ModelInfo {
 		{ID: "minimax-m2", DisplayName: "MiniMax-M2", Description: "MiniMax M2", Created: 1758672000, Thinking: iFlowThinkingSupport},
 		{ID: "minimax-m2.1", DisplayName: "MiniMax-M2.1", Description: "MiniMax M2.1", Created: 1766448000, Thinking: iFlowThinkingSupport},
 		{ID: "iflow-rome-30ba3b", DisplayName: "iFlow-ROME", Description: "iFlow Rome 30BA3B model", Created: 1736899200},
+		{ID: "kimi-k2.5", DisplayName: "Kimi-K2.5", Description: "Moonshot Kimi K2.5", Created: 1769443200, Thinking: iFlowThinkingSupport},
 	}
 	models := make([]*ModelInfo, 0, len(entries))
 	for _, entry := range entries {
