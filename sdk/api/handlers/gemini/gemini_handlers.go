@@ -17,6 +17,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v6/sdk/api/handlers"
+	log "github.com/sirupsen/logrus"
 )
 
 // GeminiAPIHandler contains the handlers for Gemini API endpoints.
@@ -209,6 +210,12 @@ func (h *GeminiAPIHandler) handleStreamGenerateContent(c *gin.Context, modelName
 				errChan = nil
 				continue
 			}
+			// Check if this is a thinking signature error before any payload bytes are sent
+			if handlers.ShouldFallbackThinkingSignature(errMsg) {
+				cliCancel(errMsg.Error)
+				h.handleThinkingSignatureFallback(c, modelName, rawJSON, flusher, alt, setSSEHeaders)
+				return
+			}
 			// Upstream failed immediately. Return proper error status and JSON.
 			h.WriteErrorResponse(c, errMsg)
 			if errMsg != nil {
@@ -248,6 +255,30 @@ func (h *GeminiAPIHandler) handleStreamGenerateContent(c *gin.Context, modelName
 			return
 		}
 	}
+}
+
+// handleThinkingSignatureFallback retries a streaming request with non-stream mode
+// and returns a final-only response on success.
+func (h *GeminiAPIHandler) handleThinkingSignatureFallback(c *gin.Context, modelName string, rawJSON []byte, flusher http.Flusher, alt string, setSSEHeaders func()) {
+	log.Infof("Gemini: Streaming thinking signature error. Attempting non-stream fallback. requestID=%s", c.GetString("X-Request-ID"))
+
+	retryCtx, retryCancel := h.GetContextWithCancel(h, c, context.Background())
+	defer retryCancel(nil)
+
+	resp, errMsg := h.ExecuteWithAuthManager(retryCtx, h.HandlerType(), modelName, rawJSON, alt)
+	if errMsg != nil {
+		log.Warnf("Gemini: Non-stream fallback failed: %v", errMsg.Error)
+		h.WriteErrorResponse(c, errMsg)
+		return
+	}
+
+	if alt == "" {
+		setSSEHeaders()
+	}
+	sseBytes := handlers.BuildGeminiFinalOnlySSE(resp, alt)
+	_, _ = c.Writer.Write(sseBytes)
+	flusher.Flush()
+	log.Infof("Gemini: Thinking signature fallback succeeded. requestID=%s", c.GetString("X-Request-ID"))
 }
 
 // handleCountTokens handles token counting requests for Gemini models.

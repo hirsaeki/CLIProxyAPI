@@ -245,6 +245,12 @@ func (h *ClaudeCodeAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON [
 				errChan = nil
 				continue
 			}
+			// Check if this is a thinking signature error before any payload bytes are sent
+			if handlers.ShouldFallbackThinkingSignature(errMsg) {
+				cliCancel(errMsg.Error)
+				h.handleThinkingSignatureFallback(c, rawJSON, flusher, setSSEHeaders)
+				return
+			}
 			// Upstream failed immediately. Return proper error status and JSON.
 			h.WriteErrorResponse(c, errMsg)
 			if errMsg != nil {
@@ -276,6 +282,32 @@ func (h *ClaudeCodeAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON [
 			return
 		}
 	}
+}
+
+// handleThinkingSignatureFallback retries a streaming request with non-stream mode
+// and returns a final-only SSE response on success.
+func (h *ClaudeCodeAPIHandler) handleThinkingSignatureFallback(c *gin.Context, rawJSON []byte, flusher http.Flusher, setSSEHeaders func()) {
+	log.Infof("Claude: Streaming thinking signature error. Attempting non-stream fallback. requestID=%s", c.GetString("X-Request-ID"))
+
+	nonStreamJSON := handlers.CloneRequestWithoutStream(rawJSON)
+	modelName := gjson.GetBytes(nonStreamJSON, "model").String()
+	alt := h.GetAlt(c)
+
+	retryCtx, retryCancel := h.GetContextWithCancel(h, c, context.Background())
+	defer retryCancel(nil)
+
+	resp, errMsg := h.ExecuteWithAuthManager(retryCtx, h.HandlerType(), modelName, nonStreamJSON, alt)
+	if errMsg != nil {
+		log.Warnf("Claude: Non-stream fallback failed: %v", errMsg.Error)
+		h.WriteErrorResponse(c, errMsg)
+		return
+	}
+
+	setSSEHeaders()
+	sseBytes := handlers.BuildClaudeFinalOnlySSE(resp)
+	_, _ = c.Writer.Write(sseBytes)
+	flusher.Flush()
+	log.Infof("Claude: Thinking signature fallback succeeded. requestID=%s", c.GetString("X-Request-ID"))
 }
 
 func (h *ClaudeCodeAPIHandler) forwardClaudeStream(c *gin.Context, flusher http.Flusher, cancel func(error), data <-chan []byte, errs <-chan *interfaces.ErrorMessage) {

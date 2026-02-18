@@ -19,6 +19,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/registry"
 	responsesconverter "github.com/router-for-me/CLIProxyAPI/v6/internal/translator/openai/openai/responses"
 	"github.com/router-for-me/CLIProxyAPI/v6/sdk/api/handlers"
+	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -478,6 +479,12 @@ func (h *OpenAIAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON []byt
 				errChan = nil
 				continue
 			}
+			// Check if this is a thinking signature error before any payload bytes are sent
+			if handlers.ShouldFallbackThinkingSignature(errMsg) {
+				cliCancel(errMsg.Error)
+				h.handleThinkingSignatureFallback(c, rawJSON, flusher, setSSEHeaders)
+				return
+			}
 			// Upstream failed immediately. Return proper error status and JSON.
 			h.WriteErrorResponse(c, errMsg)
 			if errMsg != nil {
@@ -507,6 +514,31 @@ func (h *OpenAIAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON []byt
 			return
 		}
 	}
+}
+
+// handleThinkingSignatureFallback retries a streaming request with non-stream mode
+// and returns a final-only SSE response on success.
+func (h *OpenAIAPIHandler) handleThinkingSignatureFallback(c *gin.Context, rawJSON []byte, flusher http.Flusher, setSSEHeaders func()) {
+	log.Infof("OpenAI: Streaming thinking signature error. Attempting non-stream fallback. requestID=%s", c.GetString("X-Request-ID"))
+
+	nonStreamJSON := handlers.CloneRequestWithoutStream(rawJSON)
+	modelName := gjson.GetBytes(nonStreamJSON, "model").String()
+
+	retryCtx, retryCancel := h.GetContextWithCancel(h, c, context.Background())
+	defer retryCancel(nil)
+
+	resp, errMsg := h.ExecuteWithAuthManager(retryCtx, h.HandlerType(), modelName, nonStreamJSON, h.GetAlt(c))
+	if errMsg != nil {
+		log.Warnf("OpenAI: Non-stream fallback failed: %v", errMsg.Error)
+		h.WriteErrorResponse(c, errMsg)
+		return
+	}
+
+	setSSEHeaders()
+	sseBytes := handlers.BuildOpenAIFinalOnlySSE(resp)
+	_, _ = c.Writer.Write(sseBytes)
+	flusher.Flush()
+	log.Infof("OpenAI: Thinking signature fallback succeeded. requestID=%s", c.GetString("X-Request-ID"))
 }
 
 // handleCompletionsNonStreamingResponse handles non-streaming completions responses.
