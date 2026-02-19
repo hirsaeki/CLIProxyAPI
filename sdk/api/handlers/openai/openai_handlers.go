@@ -536,7 +536,7 @@ func (h *OpenAIAPIHandler) handleThinkingSignatureFallback(c *gin.Context, rawJS
 	retryCtx, retryCancel := h.GetContextWithCancel(h, c, context.Background())
 	defer retryCancel(nil)
 
-	resp, errMsg := h.ExecuteWithAuthManager(retryCtx, h.HandlerType(), modelName, nonStreamJSON, h.GetAlt(c))
+	resp, _, errMsg := h.ExecuteWithAuthManager(retryCtx, h.HandlerType(), modelName, nonStreamJSON, h.GetAlt(c))
 	if errMsg != nil {
 		log.Warnf("OpenAI: Non-stream fallback failed: %v", errMsg.Error)
 		h.WriteErrorResponse(c, errMsg)

@@ -50,7 +50,7 @@ func (e *AntigravityExecutor) executeClaudeNonStreamWithRecovery(ctx context.Con
 
 // executeClaudeStreamWithRecovery wraps executeStreamInternal with thinking error recovery for Claude models.
 // This is a fork-specific enhancement that retries on thinking signature errors.
-func (e *AntigravityExecutor) executeClaudeStreamWithRecovery(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (<-chan cliproxyexecutor.StreamChunk, error) {
+func (e *AntigravityExecutor) executeClaudeStreamWithRecovery(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
 	originalPayload := bytes.Clone(req.Payload)
 	if len(opts.OriginalRequest) > 0 {
 		originalPayload = bytes.Clone(opts.OriginalRequest)

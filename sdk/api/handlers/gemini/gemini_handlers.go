@@ -267,7 +267,7 @@ func (h *GeminiAPIHandler) handleThinkingSignatureFallback(c *gin.Context, model
 	retryCtx, retryCancel := h.GetContextWithCancel(h, c, context.Background())
 	defer retryCancel(nil)
 
-	resp, errMsg := h.ExecuteWithAuthManager(retryCtx, h.HandlerType(), modelName, rawJSON, alt)
+	resp, _, errMsg := h.ExecuteWithAuthManager(retryCtx, h.HandlerType(), modelName, rawJSON, alt)
 	if errMsg != nil {
 		log.Warnf("Gemini: Non-stream fallback failed: %v", errMsg.Error)
 		h.WriteErrorResponse(c, errMsg)

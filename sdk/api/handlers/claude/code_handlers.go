@@ -300,7 +300,7 @@ func (h *ClaudeCodeAPIHandler) handleThinkingSignatureFallback(c *gin.Context, r
 	retryCtx, retryCancel := h.GetContextWithCancel(h, c, context.Background())
 	defer retryCancel(nil)
 
-	resp, errMsg := h.ExecuteWithAuthManager(retryCtx, h.HandlerType(), modelName, nonStreamJSON, alt)
+	resp, _, errMsg := h.ExecuteWithAuthManager(retryCtx, h.HandlerType(), modelName, nonStreamJSON, alt)
 	if errMsg != nil {
 		log.Warnf("Claude: Non-stream fallback failed: %v", errMsg.Error)
 		h.WriteErrorResponse(c, errMsg)
