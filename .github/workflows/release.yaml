@@ -27,6 +27,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          release_title="${GITHUB_REF_NAME} (Local Model Overlay build)"
           release_notes_file="$(mktemp)"
           generated_notes_file="$(mktemp)"
           changelog_entries_file="$(mktemp)"
@@ -87,9 +88,9 @@ jobs:
           } > "$updated_notes_file"
 
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release edit "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file "$updated_notes_file"
+            gh release edit "$GITHUB_REF_NAME" --title "$release_title" --notes-file "$updated_notes_file"
           else
-            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file "$updated_notes_file"
+            gh release create "$GITHUB_REF_NAME" --title "$release_title" --notes-file "$updated_notes_file"
           fi
 
   build-hosted:
