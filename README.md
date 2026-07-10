@@ -92,6 +92,9 @@ PackyCode provides special discounts for our software users: register using <a h
 
 CLIProxyAPI Guides: [https://help.router-for.me/](https://help.router-for.me/)
 
+Windows installation with the repository-local WinGet manifest:
+[docs/winget.md](docs/winget.md)
+
 ## Management API
 
 see [MANAGEMENT_API.md](https://help.router-for.me/management/api)

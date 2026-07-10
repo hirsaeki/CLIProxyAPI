@@ -21,6 +21,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Test WinGet manifest generator
+        run: bash scripts/tests/generate-winget-manifest_test.sh
       - name: Build
         run: |
           go build -o test-output ./cmd/server
