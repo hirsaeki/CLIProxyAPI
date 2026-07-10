@@ -30,6 +30,7 @@ auths/*
 
 # Documentation
 docs/*
+!docs/local-model-overlay-implementation.md
 AGENTS.md
 CLAUDE.md
 GEMINI.md
