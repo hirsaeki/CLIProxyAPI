@@ -87,6 +87,60 @@ a non-empty `id`; other metadata follows `registry.ModelInfo`.
 }
 ```
 
+## Preview-to-Stable Renames
+
+When an upstream provider graduates a model from a `*-preview` ID to the same
+model without the `-preview` suffix, use the overlay to add the new provider ID.
+Start by copying the existing preview entry from
+`internal/registry/models/models.json`, then adjust the provider-facing fields:
+
+- change `id` to the new stable ID
+- change `name` to the new provider resource name
+- remove `Preview` wording from `display_name` and `description`
+- keep capability metadata such as token limits, supported methods, and
+  `thinking` unchanged unless the provider announced different values
+
+Example:
+
+```json
+{
+  "gemini": [
+    {
+      "id": "gemini-3-pro",
+      "object": "model",
+      "created": 1737158400,
+      "owned_by": "google",
+      "type": "gemini",
+      "display_name": "Gemini 3 Pro",
+      "name": "models/gemini-3-pro",
+      "version": "3.0",
+      "description": "Gemini 3 Pro",
+      "inputTokenLimit": 1048576,
+      "outputTokenLimit": 65536,
+      "supportedGenerationMethods": [
+        "generateContent",
+        "countTokens",
+        "createCachedContent",
+        "batchGenerateContent"
+      ],
+      "thinking": {
+        "min": 128,
+        "max": 32768,
+        "dynamic_allowed": true,
+        "levels": ["low", "high"]
+      }
+    }
+  ]
+}
+```
+
+The overlay does not rewrite request model names. If the provider no longer
+accepts `gemini-3-pro-preview`, callers should switch to `gemini-3-pro`, or use
+the existing model alias/mapping configuration to keep the old client-visible
+name while sending the new upstream name. The overlay also does not delete the
+old preview catalog entry; use existing model exclusion configuration if the old
+ID should be hidden from model lists.
+
 ## Merge Order
 
 1. Load the embedded or remote model catalog.
