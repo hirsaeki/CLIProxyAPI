@@ -2,14 +2,19 @@ name: Sync fork with upstream
 
 on:
   schedule:
-    - cron: "0 18 * * *" # UTC。JSTだと毎日03:00
+    - cron: "0 18 * * *" # 03:00 JST
   workflow_dispatch:
 
 permissions:
   contents: write
+  actions: write
+
+concurrency:
+  group: sync-upstream-${{ github.repository }}
+  cancel-in-progress: false
 
 env:
-  # 任意: "owner/repo" を直書きすると upstream 自動判別より優先
+  # Optional: set "owner/repo" to override automatic upstream detection.
   UPSTREAM: ""
 
 jobs:
@@ -27,13 +32,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set Git identity and merge driver
-        # Ensure git has a valid committer before any merges/pushes
-        # Configure 'ours' merge driver to preserve fork-specific files
+      - name: Set Git identity
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git config --global merge.ours.driver true
 
       - name: Detect upstream
         id: detect
@@ -42,14 +44,16 @@ jobs:
           OVERRIDE_UPSTREAM: ${{ env.UPSTREAM }}
           FORK_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
-          if [ -n "$OVERRIDE_UPSTREAM" ]; then
+          set -euo pipefail
+
+          if [ -n "${OVERRIDE_UPSTREAM}" ]; then
             echo "upstream=$OVERRIDE_UPSTREAM" >> "$GITHUB_OUTPUT"
             echo "branch=$FORK_DEFAULT_BRANCH" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           repo="${GITHUB_REPOSITORY}"
-          json=$(curl -s \
+          json=$(curl -fsSL \
             -H "Authorization: Bearer ${GITHUB_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${repo}")
@@ -74,7 +78,10 @@ jobs:
         env:
           UPSTREAM_REPO: ${{ steps.detect.outputs.upstream }}
           TARGET_BRANCH: ${{ steps.detect.outputs.branch }}
+          GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
+
           git config --local user.name  "github-actions[bot]"
           git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
       
@@ -84,11 +91,44 @@ jobs:
           git config --local --get user.email
       
           git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
-          git fetch upstream
-          git checkout "$TARGET_BRANCH"
+          git fetch --no-tags upstream "+refs/heads/${TARGET_BRANCH}:refs/remotes/upstream/${TARGET_BRANCH}"
+          git checkout -B "$TARGET_BRANCH" "origin/${TARGET_BRANCH}"
       
           if ! git merge --ff-only "upstream/${TARGET_BRANCH}"; then
             git merge --no-edit "upstream/${TARGET_BRANCH}"
           fi
       
           git push origin "$TARGET_BRANCH"
+
+          latest_upstream_tag="$(
+            git ls-remote --tags --refs upstream 'refs/tags/v*' |
+              awk '{ sub("refs/tags/", "", $2); print $2 }' |
+              grep -E '^v[0-9]+([.][0-9]+)*$' |
+              sort -V |
+              tail -n 1 || true
+          )"
+          if [ -z "$latest_upstream_tag" ]; then
+            echo "No upstream release tag found."
+            exit 0
+          fi
+
+          echo "Latest upstream release tag: $latest_upstream_tag"
+          if git ls-remote --exit-code --tags origin "refs/tags/${latest_upstream_tag}" >/dev/null 2>&1; then
+            echo "Fork already has ${latest_upstream_tag}."
+          else
+            git fetch --no-tags upstream "+refs/tags/${latest_upstream_tag}:refs/upstream-tags/${latest_upstream_tag}"
+            if ! git merge-base --is-ancestor "refs/upstream-tags/${latest_upstream_tag}^{}" HEAD; then
+              echo "Upstream tag ${latest_upstream_tag} is not contained in ${TARGET_BRANCH}; release tag skipped."
+              exit 0
+            fi
+
+            git tag -a "$latest_upstream_tag" -m "Follow upstream release ${latest_upstream_tag}" HEAD
+            git push origin "refs/tags/${latest_upstream_tag}"
+          fi
+
+          if gh release view "$latest_upstream_tag" >/dev/null 2>&1; then
+            echo "Release ${latest_upstream_tag} already exists; release dispatch skipped."
+            exit 0
+          fi
+
+          gh workflow run release.yaml --ref "$latest_upstream_tag"

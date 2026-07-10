@@ -2,9 +2,9 @@ name: release
 
 on:
   push:
-    # run only against tags
     tags:
-      - '*'
+      - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -15,6 +15,7 @@ env:
 
 jobs:
   prepare-release:
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -49,7 +50,7 @@ jobs:
 
           git fetch --force --tags
           previous_tag=""
-          if previous_tag_value="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null)"; then
+          if previous_tag_value="$(git describe --tags --match 'v[0-9]*' --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null)"; then
             previous_tag="$previous_tag_value"
             changelog_range="${previous_tag}..${GITHUB_REF_NAME}"
           else
@@ -650,7 +651,7 @@ jobs:
 
   publish-checksums:
     runs-on: ubuntu-latest
-    if: always()
+    if: ${{ always() && startsWith(github.ref, 'refs/tags/v') }}
     needs:
       - build-hosted
       - build-linux-glibc
