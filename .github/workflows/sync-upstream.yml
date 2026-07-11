@@ -79,6 +79,7 @@ jobs:
           UPSTREAM_REPO: ${{ steps.detect.outputs.upstream }}
           TARGET_BRANCH: ${{ steps.detect.outputs.branch }}
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
 
@@ -126,9 +127,9 @@ jobs:
             git push origin "refs/tags/${latest_upstream_tag}"
           fi
 
-          if gh release view "$latest_upstream_tag" >/dev/null 2>&1; then
+          if gh release view "$latest_upstream_tag" --repo "$GH_REPO" >/dev/null 2>&1; then
             echo "Release ${latest_upstream_tag} already exists; release dispatch skipped."
             exit 0
           fi
 
-          gh workflow run release.yaml --ref "$latest_upstream_tag"
+          gh workflow run release.yaml --repo "$GH_REPO" --ref "$latest_upstream_tag"
