@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.10.0.schema.json
+
+PackageIdentifier: hirsaeki.CLIProxyAPI
+PackageVersion: 7.2.66
+PackageLocale: en-US
+Publisher: Router-For.ME
+PublisherUrl: https://github.com/router-for-me
+PackageName: CLIProxyAPI
+PackageUrl: https://github.com/hirsaeki/CLIProxyAPI
+License: MIT
+LicenseUrl: https://github.com/hirsaeki/CLIProxyAPI/blob/main/LICENSE
+ShortDescription: OpenAI, Gemini, Claude, Codex, and Grok compatible API proxy server
+ManifestType: defaultLocale
+ManifestVersion: 1.10.0
