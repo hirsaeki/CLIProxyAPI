@@ -10,7 +10,7 @@ checksums_file="$tmp_dir/checksums.txt"
 manifest_dir="$tmp_dir/winget"
 
 cat > "$checksums_file" <<'EOF'
-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  CLIProxyAPI_7.2.60_windows_amd64.zip
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa *CLIProxyAPI_7.2.60_windows_amd64.zip
 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb  CLIProxyAPI_7.2.60_windows_aarch64.zip
 EOF
 

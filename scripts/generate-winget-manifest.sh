@@ -32,7 +32,18 @@ arm64_asset="CLIProxyAPI_${package_version}_windows_aarch64.zip"
 checksum_for() {
   local asset_name="$1"
   local checksum
-  checksum="$(awk -v name="$asset_name" '$2 == name { print toupper($1) }' "$checksums_file")"
+  checksum="$(
+    awk -v name="$asset_name" '
+      {
+        filename = $2
+        sub(/^\*/, "", filename)
+        sub(/\r$/, "", filename)
+        if (filename == name) {
+          print toupper($1)
+        }
+      }
+    ' "$checksums_file"
+  )"
   if [[ ! "$checksum" =~ ^[A-F0-9]{64}$ ]]; then
     echo "missing or invalid SHA256 checksum for $asset_name" >&2
     exit 1
