@@ -104,7 +104,7 @@ archives have been built and the final checksum file has been published:
 The generated manifests are deterministic for a release tag, repository, and
 checksum file. Their generator is covered by
 `scripts/tests/generate-winget-manifest_test.sh`, which also runs in the pull
-request build workflow.
+request workflow dedicated to WinGet manifest changes.
 
 ## Repository settings and permissions
 

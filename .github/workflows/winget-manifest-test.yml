@@ -1,0 +1,22 @@
+name: winget-manifest-test
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/release.yaml'
+      - '.github/workflows/winget-manifest-test.yml'
+      - 'scripts/generate-winget-manifest.sh'
+      - 'scripts/tests/generate-winget-manifest_test.sh'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Test WinGet manifest generator
+        run: bash scripts/tests/generate-winget-manifest_test.sh
