@@ -110,6 +110,11 @@ jobs:
       
           git push origin "$TARGET_BRANCH"
 
+          if [ -f .github/workflows/docker-image.yml ]; then
+            gh workflow disable docker-image.yml --repo "$GH_REPO"
+            echo "Disabled upstream Docker Hub workflow in the fork."
+          fi
+
           latest_upstream_tag="$(
             git ls-remote --tags --refs upstream 'refs/tags/v*' |
               awk '{ sub("refs/tags/", "", $2); print $2 }' |
