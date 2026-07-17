@@ -111,8 +111,15 @@ jobs:
           git push origin "$TARGET_BRANCH"
 
           if [ -f .github/workflows/docker-image.yml ]; then
-            gh workflow disable docker-image.yml --repo "$GH_REPO"
-            echo "Disabled upstream Docker Hub workflow in the fork."
+            docker_workflow_state="$(
+              gh api "repos/${GH_REPO}/actions/workflows/docker-image.yml" --jq '.state'
+            )"
+            if [ "$docker_workflow_state" = "active" ]; then
+              gh workflow disable docker-image.yml --repo "$GH_REPO"
+              echo "Disabled upstream Docker Hub workflow in the fork."
+            else
+              echo "Upstream Docker Hub workflow is already inactive (${docker_workflow_state})."
+            fi
           fi
 
           latest_upstream_tag="$(
