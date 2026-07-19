@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.10.0.schema.json
 
 PackageIdentifier: hirsaeki.CLIProxyAPI
-PackageVersion: 7.2.88
+PackageVersion: 7.2.91
 PackageLocale: en-US
 Publisher: Router-For.ME
 PublisherUrl: https://github.com/router-for-me
