@@ -151,6 +151,19 @@ func (l *testSymbolLookup) Call(ctx context.Context, method string, request []by
 			return nil, errRoute
 		}
 		return marshalRPCResult(resp)
+	case pluginabi.MethodModelForAuth:
+		if l.active.Capabilities.ModelProvider == nil {
+			return nil, fmt.Errorf("missing model provider")
+		}
+		var req rpcAuthModelRequest
+		if errUnmarshal := json.Unmarshal(request, &req); errUnmarshal != nil {
+			return nil, errUnmarshal
+		}
+		resp, errModels := l.active.Capabilities.ModelProvider.ModelsForAuth(ctx, req.AuthModelRequest)
+		if errModels != nil {
+			return nil, errModels
+		}
+		return marshalRPCResult(resp)
 	case pluginabi.MethodUsageHandle:
 		if l.active.Capabilities.UsagePlugin == nil {
 			return marshalRPCResult(rpcEmptyResponse{})

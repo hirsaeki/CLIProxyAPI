@@ -47,6 +47,16 @@ assert_contains '  InstallerSha256: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 assert_contains '  InstallerUrl: https://github.com/hirsaeki/CLIProxyAPI/releases/download/v7.2.60/CLIProxyAPI_7.2.60_windows_aarch64.zip' "$installer_manifest"
 assert_contains '  InstallerSha256: "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"' "$installer_manifest"
 
+relative_file_count="$(grep -Fc -- '  - RelativeFilePath:' "$installer_manifest")"
+if [[ "$relative_file_count" -ne 2 ]]; then
+  printf 'expected only two executable entries, found %s\n' "$relative_file_count" >&2
+  exit 1
+fi
+if grep -Fq -- '.dll' "$installer_manifest"; then
+  echo 'installer manifest unexpectedly exposes a plugin DLL as a portable executable' >&2
+  exit 1
+fi
+
 : > "$tmp_dir/empty-checksums.txt"
 if "$repo_root/scripts/generate-winget-manifest.sh" \
   v7.2.60 \

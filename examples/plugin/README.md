@@ -26,6 +26,7 @@ This directory contains standard dynamic library plugin examples for the CLIProx
 - `host-callback/`: minimal plugin resource that demonstrates host callbacks.
 - `host-callback-auth-files/`: Go-only plugin resource that calls host auth file callbacks.
 - `host-model-callback/`: Go-only plugin resource that calls the host model execution callbacks.
+- `vertex-region-models/`: Go-only model provider that filters each Vertex credential's native candidates against Google's endpoint location matrix.
 
 Most standard capability examples contain `go/`, `c/`, and `rust/` subdirectories. Specialized examples may provide only the implementation language they need.
 
@@ -99,6 +100,19 @@ make -C examples/plugin build
 ```
 
 Artifacts are written to `examples/plugin/bin`.
+
+## Vertex Region Models
+
+`vertex-region-models` binds to the native `vertex` auth provider without replacing
+its executor. It keeps the host catalog's complete model metadata and filters the
+candidate list using the location stored on each Vertex credential.
+
+Windows release archives bundle this plugin under `plugins/windows/<arch>` with
+the stable plugin ID `vertex-region-models`. Configure `dir: "@exe/plugins"` to
+discover the bundled copy independently of the process working directory. The
+plugin remains opt-in.
+
+See `vertex-region-models/README.md` for configuration, cache, and failure behavior.
 
 ## Notes
 

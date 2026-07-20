@@ -698,6 +698,79 @@ func TestModelsForAuthOAuthScopeFallsBackToExecutorIdentifier(t *testing.T) {
 	}
 }
 
+func TestModelsForAuthMatchesExplicitProviderIdentifierAndPassesCandidates(t *testing.T) {
+	var gotRequest pluginapi.AuthModelRequest
+	host := newHostWithRecords(capabilityRecord{
+		id: "vertex-model-filter",
+		plugin: pluginapi.Plugin{Capabilities: pluginapi.Capabilities{
+			ModelProviderIdentifiers: []string{" VERTEX "},
+			ModelProvider: modelProviderFunc{
+				modelsForAuth: func(ctx context.Context, req pluginapi.AuthModelRequest) (pluginapi.ModelResponse, error) {
+					gotRequest = req
+					return pluginapi.ModelResponse{
+						Provider: "vertex",
+						Models:   append([]pluginapi.ModelInfo(nil), req.CandidateModels[:1]...),
+					}, nil
+				},
+			},
+		}},
+	})
+	candidates := []*registry.ModelInfo{
+		{
+			ID:                  "gemini-supported",
+			DisplayName:         "Gemini Supported",
+			SupportedParameters: []string{"temperature"},
+			Thinking:            &registry.ThinkingSupport{Min: 128, Max: 32768},
+		},
+		{ID: "gemini-unsupported"},
+	}
+
+	result := host.ModelsForAuth(context.Background(), &coreauth.Auth{
+		ID:       "vertex-auth",
+		Provider: "vertex",
+	}, candidates)
+
+	if !result.Handled || result.Provider != "vertex" || len(result.Models) != 1 {
+		t.Fatalf("ModelsForAuth() = %#v, want one handled Vertex model", result)
+	}
+	if result.Models[0].ID != "gemini-supported" || result.Models[0].Thinking == nil || result.Models[0].Thinking.Max != 32768 {
+		t.Fatalf("filtered model = %#v, want preserved candidate metadata", result.Models[0])
+	}
+	if gotRequest.AuthID != "vertex-auth" || gotRequest.AuthProvider != "vertex" {
+		t.Fatalf("auth request = %#v, want Vertex auth context", gotRequest)
+	}
+	if len(gotRequest.CandidateModels) != 2 || gotRequest.CandidateModels[0].DisplayName != "Gemini Supported" {
+		t.Fatalf("candidate models = %#v, want complete host candidates", gotRequest.CandidateModels)
+	}
+	gotRequest.CandidateModels[0].SupportedParameters[0] = "mutated"
+	gotRequest.CandidateModels[0].Thinking.Max = 1
+	if candidates[0].SupportedParameters[0] != "temperature" || candidates[0].Thinking.Max != 32768 {
+		t.Fatalf("plugin request mutated host candidates: %#v", candidates[0])
+	}
+}
+
+func TestModelsForAuthExplicitProviderIdentifierDoesNotClaimOtherProviders(t *testing.T) {
+	called := false
+	host := newHostWithRecords(capabilityRecord{
+		id: "vertex-model-filter",
+		plugin: pluginapi.Plugin{Capabilities: pluginapi.Capabilities{
+			ModelProviderIdentifiers: []string{"vertex"},
+			ModelProvider: modelProviderFunc{
+				modelsForAuth: func(ctx context.Context, req pluginapi.AuthModelRequest) (pluginapi.ModelResponse, error) {
+					called = true
+					return pluginapi.ModelResponse{}, nil
+				},
+			},
+		}},
+	})
+
+	result := host.ModelsForAuth(context.Background(), &coreauth.Auth{ID: "gemini-auth", Provider: "gemini"})
+
+	if result.Handled || called {
+		t.Fatalf("Vertex model provider claimed Gemini auth: result=%#v called=%v", result, called)
+	}
+}
+
 func TestRegisterExecutorsStaticScopeSkipsModelsForAuth(t *testing.T) {
 	modelRegistry := newFakeModelRegistry()
 	manager := newFakeExecutorManager()

@@ -144,6 +144,13 @@ var registerPluginExecutors = func(host *pluginhost.Host, manager *coreauth.Mana
 	host.RegisterExecutors(manager, registry.GetGlobalRegistry())
 }
 
+var resolvePluginModelsForAuth = func(host *pluginhost.Host, ctx context.Context, auth *coreauth.Auth, candidates []*ModelInfo) pluginhost.AuthModelResult {
+	if host == nil {
+		return pluginhost.AuthModelResult{}
+	}
+	return host.ModelsForAuth(ctx, auth, candidates)
+}
+
 // RegisterUsagePlugin registers a usage plugin on the global usage manager.
 // This allows external code to monitor API usage and token consumption.
 //
@@ -1177,11 +1184,11 @@ func (s *Service) appendPluginModels(providerKey string, models []*ModelInfo) []
 	return out
 }
 
-func (s *Service) tryRegisterPluginModelsForAuth(ctx context.Context, a *coreauth.Auth, provider, authKind string, excluded []string) bool {
+func (s *Service) tryRegisterPluginModelsForAuth(ctx context.Context, a *coreauth.Auth, provider, authKind string, excluded []string, candidates []*ModelInfo) bool {
 	if s == nil || s.pluginHost == nil || a == nil {
 		return false
 	}
-	result := s.pluginHost.ModelsForAuth(ctx, a)
+	result := resolvePluginModelsForAuth(s.pluginHost, ctx, a, candidates)
 	if !result.Handled {
 		return false
 	}
@@ -1240,6 +1247,23 @@ func (s *Service) tryRegisterPluginModelsForAuth(ctx context.Context, a *coreaut
 	}
 	GlobalModelRegistry().UnregisterClient(activeAuth.ID)
 	return true
+}
+
+func providerHasNativeModelCandidates(provider string) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case constant.Gemini,
+		constant.GeminiInteractions,
+		"vertex",
+		"aistudio",
+		"antigravity",
+		"claude",
+		"codex",
+		"kimi",
+		"xai":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Service) applyConfigUpdate(newCfg *config.Config) {
@@ -1946,7 +1970,7 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 			excluded = strings.Split(val, ",")
 		}
 	}
-	if s.tryRegisterPluginModelsForAuth(ctx, a, provider, authKind, excluded) {
+	if !providerHasNativeModelCandidates(provider) && s.tryRegisterPluginModelsForAuth(ctx, a, provider, authKind, excluded, nil) {
 		return
 	}
 	var models []*ModelInfo
@@ -2142,6 +2166,9 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 				return
 			}
 		}
+	}
+	if providerHasNativeModelCandidates(provider) && s.tryRegisterPluginModelsForAuth(ctx, a, provider, authKind, excluded, models) {
+		return
 	}
 	models = applyOAuthModelAliasForAuth(s.cfg, provider, authKind, a.Attributes, models)
 	key := provider

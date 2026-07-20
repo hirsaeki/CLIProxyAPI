@@ -1,4 +1,6 @@
-EXAMPLES := simple model auth frontend-auth executor protocol-format request-translator request-normalizer response-translator response-normalizer thinking usage cli management-api host-callback host-callback-auth-files host-model-callback claude-web-search-router
+MULTILANG_EXAMPLES := simple model auth frontend-auth executor protocol-format request-translator request-normalizer response-translator response-normalizer thinking usage cli management-api host-callback
+GO_ONLY_EXAMPLES := frontend-auth-exclusive codex-service-tier scheduler host-callback-auth-files host-model-callback claude-web-search-router vertex-region-models
+EXAMPLES := $(MULTILANG_EXAMPLES) $(GO_ONLY_EXAMPLES)
 LANGUAGES := go c rust
 BIN_DIR := $(CURDIR)/bin
 BUILD_DIR := $(BIN_DIR)/build
@@ -19,15 +21,18 @@ RUST_DYLIB_PREFIX := lib
 RUST_DYLIB_EXT := so
 endif
 
-.PHONY: build list clean
+.PHONY: build list clean vertex-region-models
 
-build: $(foreach example,$(EXAMPLES),$(foreach lang,$(LANGUAGES),$(BIN_DIR)/$(example)-$(lang).$(PLUGIN_EXT)))
+build: $(foreach example,$(MULTILANG_EXAMPLES),$(foreach lang,$(LANGUAGES),$(BIN_DIR)/$(example)-$(lang).$(PLUGIN_EXT))) $(foreach example,$(GO_ONLY_EXAMPLES),$(BIN_DIR)/$(example)-go.$(PLUGIN_EXT))
 
 list:
-	@$(foreach example,$(EXAMPLES),$(foreach lang,$(LANGUAGES),echo $(example)/$(lang);))
+	@$(foreach example,$(MULTILANG_EXAMPLES),$(foreach lang,$(LANGUAGES),echo $(example)/$(lang);))
+	@$(foreach example,$(GO_ONLY_EXAMPLES),echo $(example)/go;)
 
 clean:
 	rm -rf $(BIN_DIR)
+
+vertex-region-models: $(BIN_DIR)/vertex-region-models-go.$(PLUGIN_EXT)
 
 $(BIN_DIR):
 	mkdir -p $(BIN_DIR)

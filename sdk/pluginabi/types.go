@@ -9,6 +9,9 @@ const (
 	// Increment only for breaking RPC changes. New capabilities such as ModelRouter
 	// are gated by capability flags and method names while the version stays at 1.
 	SchemaVersion uint32 = 1
+	// HostFeatureModelProviderNativeCandidates reports that native provider candidates are
+	// included in model.for_auth requests before plugin filtering.
+	HostFeatureModelProviderNativeCandidates = "model-provider-native-candidates"
 )
 
 const (

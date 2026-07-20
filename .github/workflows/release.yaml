@@ -46,6 +46,10 @@ jobs:
 
           - `CLIProxyAPI_<version>_freebsd_aarch64_no-plugin.tar.gz` is the FreeBSD arm64 build. It is built without CGO and does not support dynamic library plugins.
 
+          ## Windows release assets
+
+          - Windows x64 and ARM64 ZIPs bundle the opt-in Vertex region models plugin under `plugins/windows/<arch>`. Set `plugins.dir` to `@exe/plugins` and explicitly enable `vertex-region-models` to use it.
+
           <!-- cliproxyapi-linux-release-assets:end -->
           EOF
 
@@ -178,6 +182,20 @@ jobs:
           CGO_ENABLED=1 GOOS="$GOOS" GOARCH="$GOARCH" go build \
             -ldflags="-s -w -X main.Version=${RELEASE_VERSION} -X main.Commit=${COMMIT} -X main.BuildDate=${BUILD_DATE}" \
             -o "$archive_dir/$binary_name" ./cmd/server/
+
+          if [[ "$GOOS" == "windows" ]]; then
+            plugin_dir="$archive_dir/plugins/windows/$GOARCH"
+            plugin_output="${PWD}/${plugin_dir}/vertex-region-models-v${RELEASE_VERSION}.dll"
+            mkdir -p "$plugin_dir"
+            pushd examples/plugin/vertex-region-models/go >/dev/null
+            CGO_ENABLED=1 GOOS="$GOOS" GOARCH="$GOARCH" go build \
+              -buildmode=c-shared \
+              -o "$plugin_output" .
+            popd >/dev/null
+            rm -f "${plugin_output%.dll}.h"
+            test -f "$plugin_output"
+            test ! -f "${plugin_output%.dll}.h"
+          fi
 
           cp LICENSE README.md README_CN.md config.example.yaml "$archive_dir/"
           if [[ "$ARCHIVE_FORMAT" == "zip" ]]; then

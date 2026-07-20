@@ -71,6 +71,9 @@ type Capabilities struct {
 	ModelRegistrar ModelRegistrar
 	// ModelProvider contributes provider-native static and per-auth model metadata.
 	ModelProvider ModelProvider
+	// ModelProviderIdentifiers binds ModelProvider to existing auth provider identifiers.
+	// It allows a model-only plugin to filter native provider models without claiming auth or executor capabilities.
+	ModelProviderIdentifiers []string
 	// AuthProvider lets the host parse, login, poll, and refresh plugin provider auths.
 	AuthProvider AuthProvider
 	// FrontendAuthProvider authenticates frontend requests before proxy handling.
@@ -405,6 +408,9 @@ type AuthModelRequest struct {
 	Metadata map[string]any
 	// Attributes contains immutable routing and provider attributes.
 	Attributes map[string]string
+	// CandidateModels contains the host-resolved native models when the auth provider has a built-in model catalog.
+	// Model filter plugins should return the selected candidates unchanged to preserve provider metadata.
+	CandidateModels []ModelInfo
 	// Host contains relevant host configuration.
 	Host HostConfigSummary
 	// HTTPClient executes upstream HTTP requests through host transport policy.

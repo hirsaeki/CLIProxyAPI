@@ -164,6 +164,10 @@ plugins:
 ```
 
 `plugins.configs.<pluginID>` is passed to `plugin.register` or `plugin.reconfigure` as normalized YAML bytes inside the JSON request.
+The lifecycle request also carries `schema_version` and optional `host_features`.
+Plugins must ignore unknown features and treat an absent feature as unsupported.
+`model-provider-native-candidates` means native candidate models are available to
+model provider plugins in `model.for_auth`.
 
 ## Host HTTP Bridge
 

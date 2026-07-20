@@ -60,6 +60,7 @@ func registerRPCPlugin(ctx context.Context, host *Host, id string, client plugin
 	resp, errCall := callPlugin[rpcRegistration](ctx, client, method, rpcLifecycleRequest{
 		ConfigYAML:    bytes.Clone(configYAML),
 		SchemaVersion: pluginabi.SchemaVersion,
+		HostFeatures:  []string{pluginabi.HostFeatureModelProviderNativeCandidates},
 	})
 	if errCall != nil {
 		return pluginapi.Plugin{}, errCall
@@ -72,6 +73,7 @@ func registerRPCPlugin(ctx context.Context, host *Host, id string, client plugin
 		Metadata: resp.Metadata,
 		Capabilities: pluginapi.Capabilities{
 			FrontendAuthProviderExclusive: resp.Capabilities.FrontendAuthProvider && resp.Capabilities.FrontendAuthProviderExclusive,
+			ModelProviderIdentifiers:      append([]string(nil), resp.Capabilities.ModelProviderIdentifiers...),
 			ExecutorModelScope:            resp.Capabilities.ExecutorModelScope,
 			ExecutorInputFormats:          append([]string(nil), resp.Capabilities.ExecutorInputFormats...),
 			ExecutorOutputFormats:         append([]string(nil), resp.Capabilities.ExecutorOutputFormats...),

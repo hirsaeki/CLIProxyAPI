@@ -43,8 +43,28 @@ cli-proxy-api --version
 ```
 
 WinGet selects the x64 or ARM64 release archive for the current machine. The
-archive contains `cli-proxy-api.exe`, which is installed as a portable package
-and exposed through the `cli-proxy-api` command alias.
+archive contains `cli-proxy-api.exe` and the matching Vertex region models DLL
+under `plugins/windows/<arch>`. WinGet installs the complete archive tree but
+creates a command alias only for `cli-proxy-api.exe`; the DLL is not declared as
+a nested portable executable.
+
+The bundled plugin is trusted in-process code and remains opt-in. Add the
+following to the runtime configuration to enable it without depending on the
+process working directory:
+
+```yaml
+plugins:
+  enabled: true
+  dir: "@exe/plugins"
+  configs:
+    vertex-region-models:
+      enabled: true
+      priority: 20
+      fail_open: true
+```
+
+`@exe` resolves to the directory containing `cli-proxy-api.exe`. WinGet does not
+create or modify `config.yaml` during install or upgrade.
 
 The manifests are created by the first successful release after this automation
 is merged. Until its automated pull request is merged, the raw manifest URLs
@@ -134,4 +154,6 @@ Before merging the generated pull request, verify:
 - `PackageVersion` matches the release tag without the leading `v`.
 - The x64 and ARM64 installer URLs point to the same GitHub Release.
 - Both SHA256 values match the corresponding ZIP assets.
+- Each ZIP contains `plugins/windows/<arch>/vertex-region-models-v<version>.dll`.
+- `NestedInstallerFiles` contains only `cli-proxy-api.exe`, not the plugin DLL.
 - The `winget validate` step completed successfully.

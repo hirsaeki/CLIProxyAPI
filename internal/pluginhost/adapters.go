@@ -313,9 +313,13 @@ func (h *Host) RegisterModels(ctx context.Context, modelRegistry modelRegistry) 
 	h.commitModelClients(snap, modelRegistry, registrations, nextClients, nextProviders, nextModelRegistrations)
 }
 
-func (h *Host) ModelsForAuth(ctx context.Context, auth *coreauth.Auth) AuthModelResult {
+func (h *Host) ModelsForAuth(ctx context.Context, auth *coreauth.Auth, candidateGroups ...[]*registry.ModelInfo) AuthModelResult {
 	if h == nil || auth == nil {
 		return AuthModelResult{}
+	}
+	var candidates []*registry.ModelInfo
+	if len(candidateGroups) > 0 {
+		candidates = candidateGroups[0]
 	}
 	providerKey := normalizeProviderID(auth.Provider)
 	if providerKey == "" {
@@ -329,8 +333,12 @@ func (h *Host) ModelsForAuth(ctx context.Context, auth *coreauth.Auth) AuthModel
 		if !executorScopeAllowsOAuthModels(record.plugin.Capabilities) {
 			continue
 		}
-		authProvider := record.plugin.Capabilities.AuthProvider
-		if authProvider != nil {
+		explicitProviders := record.plugin.Capabilities.ModelProviderIdentifiers
+		if len(explicitProviders) > 0 {
+			if !modelProviderIdentifierMatches(explicitProviders, providerKey) {
+				continue
+			}
+		} else if authProvider := record.plugin.Capabilities.AuthProvider; authProvider != nil {
 			identifier, okIdentifier := h.callAuthProviderIdentifier(record.id, authProvider)
 			if !okIdentifier || normalizeProviderID(identifier) != providerKey {
 				continue
@@ -350,7 +358,7 @@ func (h *Host) ModelsForAuth(ctx context.Context, auth *coreauth.Auth) AuthModel
 				continue
 			}
 		}
-		resp, errModels := h.callModelsForAuth(ctx, record, modelProvider, auth)
+		resp, errModels := h.callModelsForAuth(ctx, record, modelProvider, auth, candidates)
 		if errModels != nil {
 			log.Warnf("pluginhost: models for auth %s failed: %v", auth.ID, errModels)
 			return AuthModelResult{Handled: true, Err: errModels}
@@ -383,6 +391,19 @@ func (h *Host) ModelsForAuth(ctx context.Context, auth *coreauth.Auth) AuthModel
 		return AuthModelResult{Provider: respProvider, Models: models, Auth: updated, Handled: true}
 	}
 	return AuthModelResult{}
+}
+
+func modelProviderIdentifierMatches(identifiers []string, provider string) bool {
+	provider = normalizeProviderID(provider)
+	if provider == "" {
+		return false
+	}
+	for _, identifier := range identifiers {
+		if normalizeProviderID(identifier) == provider {
+			return true
+		}
+	}
+	return false
 }
 
 func authDataHasValue(data pluginapi.AuthData) bool {
@@ -489,7 +510,7 @@ func (h *Host) callModelProviderStaticModels(ctx context.Context, record capabil
 	})
 }
 
-func (h *Host) callModelsForAuth(ctx context.Context, record capabilityRecord, provider pluginapi.ModelProvider, auth *coreauth.Auth) (resp pluginapi.ModelResponse, err error) {
+func (h *Host) callModelsForAuth(ctx context.Context, record capabilityRecord, provider pluginapi.ModelProvider, auth *coreauth.Auth, candidates []*registry.ModelInfo) (resp pluginapi.ModelResponse, err error) {
 	if h == nil || provider == nil || auth == nil || h.isPluginFused(record.id) || !h.recordCurrent(record) {
 		return pluginapi.ModelResponse{}, nil
 	}
@@ -500,15 +521,22 @@ func (h *Host) callModelsForAuth(ctx context.Context, record capabilityRecord, p
 			err = fmt.Errorf("model provider per-auth models panic: %v", recovered)
 		}
 	}()
+	candidateModels := make([]pluginapi.ModelInfo, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate != nil {
+			candidateModels = append(candidateModels, registryModelInfoToPluginModelInfo(candidate))
+		}
+	}
 	return provider.ModelsForAuth(ctx, pluginapi.AuthModelRequest{
-		Plugin:       record.meta,
-		AuthID:       auth.ID,
-		AuthProvider: auth.Provider,
-		StorageJSON:  storageJSONFromAuth(auth),
-		Metadata:     cloneAnyMap(auth.Metadata),
-		Attributes:   cloneStringMap(auth.Attributes),
-		Host:         h.hostConfigSummary(),
-		HTTPClient:   h.newHTTPClient(auth),
+		Plugin:          record.meta,
+		AuthID:          auth.ID,
+		AuthProvider:    auth.Provider,
+		StorageJSON:     storageJSONFromAuth(auth),
+		Metadata:        cloneAnyMap(auth.Metadata),
+		Attributes:      cloneStringMap(auth.Attributes),
+		CandidateModels: candidateModels,
+		Host:            h.hostConfigSummary(),
+		HTTPClient:      h.newHTTPClient(auth),
 	})
 }
 

@@ -60,7 +60,9 @@ pprof:
 # Per-plugin enabled only controls plugins.configs.<pluginID>.enabled and does not implicitly change global plugins.enabled.
 plugins:
   enabled: false
-  dir: "plugins"
+  # @exe resolves relative to the cli-proxy-api executable, independent of the working directory.
+  # Use "plugins" instead when loading development builds from the current working directory.
+  dir: "@exe/plugins"
   # Additional plugin store registries. The built-in official registry is always included.
   # store-sources:
   #   - "https://example.com/cliproxy-plugins/registry.json"
@@ -79,6 +81,11 @@ plugins:
       config2: "string"
       config3: 3
       mode: "safe" # enum example: safe, fast
+    # Windows release archives bundle this plugin. It remains opt-in because plugins are trusted code.
+    # vertex-region-models:
+    #   enabled: true
+    #   priority: 20
+    #   fail_open: true
 
 # When true, disable high-overhead request logging and HTTP middleware features to reduce per-request memory usage under high concurrency.
 commercial-mode: false

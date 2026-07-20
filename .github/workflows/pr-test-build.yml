@@ -23,3 +23,40 @@ jobs:
         run: |
           go build -o test-output ./cmd/server
           rm -f test-output
+
+  windows-plugin:
+    name: build Windows plugin (${{ matrix.goarch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            goarch: amd64
+          - runner: windows-11-arm
+            goarch: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build Vertex region models plugin
+        shell: bash
+        env:
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          plugin_dir="dist/plugins/windows/$GOARCH"
+          plugin_output="${PWD}/${plugin_dir}/vertex-region-models-vci.dll"
+          mkdir -p "$plugin_dir"
+          pushd examples/plugin/vertex-region-models/go >/dev/null
+          CGO_ENABLED=1 GOOS=windows GOARCH="$GOARCH" go build \
+            -buildmode=c-shared \
+            -o "$plugin_output" .
+          popd >/dev/null
+          rm -f "${plugin_output%.dll}.h"
+          test -f "$plugin_output"
+          test ! -f "${plugin_output%.dll}.h"
