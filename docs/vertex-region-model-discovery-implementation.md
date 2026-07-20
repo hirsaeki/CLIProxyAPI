@@ -166,6 +166,7 @@ host and `vertex-region-models` must be enabled explicitly.
 - `go test ./...` from `examples/plugin/vertex-region-models/go`
 - `go build -buildmode=c-shared` for the Vertex region model plugin
 - `bash scripts/tests/generate-winget-manifest_test.sh`
+- `bash scripts/tests/windows-plugin-workflow_test.sh`
 - YAML parsing for the release, PR build, and example configuration files
 - `go build -o test-output ./cmd/server` followed by removal of `test-output`
 - `gofmt` leaves all changed Go files formatted
@@ -214,10 +215,20 @@ therefore a filter over the host catalog, not an additional source of model
 records. Cache state is process-local; a restart performs a fresh fetch, while
 refresh failures within a process retain the last successfully parsed matrix.
 
-Windows release builds now compile the plugin for the host matrix architecture,
-remove the generated C header, assert the expected DLL layout, and archive the
-whole plugin directory. Pull requests exercise the same native `c-shared` build
-on `windows-latest` for amd64 and `windows-11-arm` for arm64. Local verification
-also covered executable-relative path resolution, missing-feature behavior for
-both register and reconfigure, the manifest's DLL-alias exclusion, and a native
+Windows release builds now cross-compile both plugin architectures on
+`windows-latest` with the pinned LLVM-MinGW `20260616` x86_64 host package. The
+download is verified against its published SHA-256 digest, and each matrix entry
+selects an explicit target compiler (`x86_64-w64-mingw32-clang` or
+`aarch64-w64-mingw32-clang`). This avoids depending on the runner's default
+`gcc`, which may target a different architecture.
+
+The Go linker writes the requested DLL name into an unquoted `LIBRARY` entry in
+its generated DEF file. Because versioned names such as
+`vertex-region-models-v7.2.92.dll` are not accepted by all MinGW linkers, CI
+links as `vertex_region_models.dll`, removes the generated C header, and then
+renames the DLL to the versioned archive name. Pull requests exercise the same
+amd64 and arm64 cross-build path and a workflow regression test locks down the
+toolchain, compiler mapping, and rename behavior. Local verification also
+covered executable-relative path resolution, missing-feature behavior for both
+register and reconfigure, the manifest's DLL-alias exclusion, and a native
 `c-shared` build on the development host.

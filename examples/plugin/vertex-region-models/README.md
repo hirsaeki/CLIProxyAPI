@@ -35,6 +35,14 @@ Windows release archives bundle a versioned build at
 WinGet with the rest of the archive but remains disabled until explicitly
 configured.
 
+Release and pull-request builds use a pinned LLVM-MinGW x86_64 host package to
+cross-compile both Windows architectures. The matrix selects
+`x86_64-w64-mingw32-clang` for amd64 and `aarch64-w64-mingw32-clang` for arm64.
+CI links the plugin with the temporary name `vertex_region_models.dll` before
+renaming it to the versioned archive name. This is required because Go places
+the requested output name in an unquoted generated DEF `LIBRARY` entry, and
+some MinGW linkers reject the versioned name.
+
 ## Configuration
 
 ```yaml
