@@ -2,7 +2,7 @@ name: Sync fork with upstream
 
 on:
   schedule:
-    - cron: "0 18 * * *" # 03:00 JST
+    - cron: "0 */4 * * *"
   workflow_dispatch:
 
 permissions:
@@ -94,20 +94,20 @@ jobs:
 
           git config --local user.name  "github-actions[bot]"
           git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
-      
+
           echo "Upstream: $UPSTREAM_REPO"
           echo "Branch: $TARGET_BRANCH"
           git config --local --get user.name
           git config --local --get user.email
-      
+
           git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
           git fetch --no-tags upstream "+refs/heads/${TARGET_BRANCH}:refs/remotes/upstream/${TARGET_BRANCH}"
           git checkout -B "$TARGET_BRANCH" "origin/${TARGET_BRANCH}"
-      
+
           if ! git merge --ff-only "upstream/${TARGET_BRANCH}"; then
             git merge --no-edit "upstream/${TARGET_BRANCH}"
           fi
-      
+
           git push origin "$TARGET_BRANCH"
 
           if [ -f .github/workflows/docker-image.yml ]; then
