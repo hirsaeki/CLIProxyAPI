@@ -42,20 +42,42 @@ winget install --manifest $manifestDir
 cli-proxy-api --version
 ```
 
-WinGet selects the x64 or ARM64 release archive for the current machine. The
-archive contains `cli-proxy-api.exe` and the matching Vertex region models DLL
-under `plugins/windows/<arch>`. WinGet installs the complete archive tree but
-creates a command alias only for `cli-proxy-api.exe`; the DLL is not declared as
-a nested portable executable.
+WinGet selects the x64 or ARM64 server archive for the current machine. The
+archive contains `cli-proxy-api.exe` and documentation, but no plugin DLL.
 
-The bundled plugin is trusted in-process code and remains opt-in. Add the
-following to the runtime configuration to enable it without depending on the
-process working directory:
+### Install the Vertex region models plugin
+
+Each GitHub Release links separate x64 and ARM64 plugin ZIPs. The ZIPs preserve
+the `plugins/windows/<go-arch>` directory tree (`amd64` or `arm64`) and are
+intended to be extracted into the user's `.cli-proxy-api` directory. Asset names
+use `amd64` for x64 and `aarch64` for ARM64. For example, set the release tag and
+run the following from PowerShell:
+
+```powershell
+$releaseTag = Read-Host "Release tag (for example, v7.2.92.2)"
+$releaseVersion = $releaseTag.Substring(1)
+$assetArch = if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq "Arm64") {
+  "aarch64"
+} else {
+  "amd64"
+}
+$assetName = "vertex-region-models_${releaseVersion}_windows_${assetArch}.zip"
+$pluginArchive = Join-Path $env:TEMP $assetName
+$pluginHome = Join-Path $HOME ".cli-proxy-api"
+
+Invoke-WebRequest `
+  -Uri "https://github.com/hirsaeki/CLIProxyAPI/releases/download/$releaseTag/$assetName" `
+  -OutFile $pluginArchive
+Expand-Archive -Path $pluginArchive -DestinationPath $pluginHome -Force
+```
+
+The plugin is trusted in-process code and remains opt-in. Add the following to
+the runtime configuration:
 
 ```yaml
 plugins:
   enabled: true
-  dir: "@exe/plugins"
+  dir: "~/.cli-proxy-api/plugins"
   configs:
     vertex-region-models:
       enabled: true
@@ -63,8 +85,16 @@ plugins:
       fail_open: true
 ```
 
-`@exe` resolves to the directory containing `cli-proxy-api.exe`. WinGet does not
-create or modify `config.yaml` during install or upgrade.
+The host expands `~` to the current user's profile directory. Do not use
+`@exe/plugins` for this WinGet installation: when the command is launched
+through `Microsoft\WinGet\Links`, executable-relative discovery can resolve
+against the alias directory instead of the package directory. WinGet does not
+create or modify `config.yaml` during install or upgrade. A stable invocation
+can keep the file at `~/.cli-proxy-api/config.yaml` and pass it explicitly:
+
+```powershell
+cli-proxy-api --config "$HOME\.cli-proxy-api\config.yaml"
+```
 
 The manifests are created by the first successful release after this automation
 is merged. Until its automated pull request is merged, the raw manifest URLs
@@ -95,6 +125,9 @@ foreach ($file in $manifestFiles) {
 winget upgrade --manifest $manifestDir
 ```
 
+The plugin is a separate Release asset and is not updated by WinGet. Download
+and extract the matching plugin ZIP again when moving to a newer plugin build.
+
 Uninstall the registered portable package by its identifier:
 
 ```powershell
@@ -107,18 +140,21 @@ published to a configured WinGet source.
 
 ## Release automation
 
-The `release` GitHub Actions workflow updates the manifest after all release
-archives have been built and the final checksum file has been published:
+The `release` GitHub Actions workflow publishes server archives and separate
+Windows plugin ZIPs, then updates the manifest after the final checksum file has
+been published:
 
-1. The workflow downloads the Windows x64 and ARM64 ZIP assets from the GitHub
-   Release.
-2. It computes SHA256 checksums and runs
+1. The build publishes x64 and ARM64 server ZIPs plus matching Vertex plugin
+   ZIPs. Release notes link directly to both plugin assets.
+2. The WinGet job downloads only the Windows x64 and ARM64 server ZIPs from the
+   GitHub Release.
+3. It computes SHA256 checksums and runs
    `scripts/generate-winget-manifest.sh`.
-3. A Windows runner validates the generated version, installer, and default
+4. A Windows runner validates the generated version, installer, and default
    locale manifests with `winget validate`.
-4. `peter-evans/create-pull-request` creates or updates
+5. `peter-evans/create-pull-request` creates or updates
    `automation/winget-v<version>` against the default branch.
-5. A maintainer reviews and merges the pull request. It is not automatically
+6. A maintainer reviews and merges the pull request. It is not automatically
    merged.
 
 The generated manifests are deterministic for a release tag, repository, and
@@ -139,10 +175,11 @@ creates pull requests but does not approve them.
 
 ## Failure handling
 
-The manifest pull request is not created when either Windows archive is missing,
-a checksum is invalid, manifest generation fails, or `winget validate` rejects
-the result. These failures do not delete or roll back release assets that were
-already published.
+The manifest pull request is not created when either Windows server archive is
+missing, a checksum is invalid, manifest generation fails, or `winget validate`
+rejects the result. Plugin packaging failures fail the corresponding Windows
+build before final checksums and manifest automation. These failures do not
+delete or roll back release assets that were already published.
 
 Inspect the `update WinGet manifest` job in the release workflow first. After
 fixing the cause, use **Re-run failed jobs** on the same workflow run. Re-running
@@ -154,6 +191,8 @@ Before merging the generated pull request, verify:
 - `PackageVersion` matches the release tag without the leading `v`.
 - The x64 and ARM64 installer URLs point to the same GitHub Release.
 - Both SHA256 values match the corresponding ZIP assets.
-- Each ZIP contains `plugins/windows/<arch>/vertex-region-models-v<version>.dll`.
-- `NestedInstallerFiles` contains only `cli-proxy-api.exe`, not the plugin DLL.
+- The server ZIPs do not contain plugin DLLs.
+- Each plugin ZIP contains
+  `plugins/windows/<arch>/vertex-region-models-v<version>.dll`.
+- `NestedInstallerFiles` contains only `cli-proxy-api.exe`.
 - The `winget validate` step completed successfully.

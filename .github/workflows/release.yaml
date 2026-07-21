@@ -50,10 +50,20 @@ jobs:
 
           ## Windows release assets
 
-          - Windows x64 and ARM64 ZIPs bundle the opt-in Vertex region models plugin under `plugins/windows/<arch>`. Set `plugins.dir` to `@exe/plugins` and explicitly enable `vertex-region-models` to use it.
+          - `CLIProxyAPI_<version>_windows_<arch>.zip` contains the server and documentation only.
+          - [Vertex region models plugin for Windows x64](https://github.com/__REPOSITORY__/releases/download/__TAG__/vertex-region-models___VERSION___windows_amd64.zip)
+          - [Vertex region models plugin for Windows ARM64](https://github.com/__REPOSITORY__/releases/download/__TAG__/vertex-region-models___VERSION___windows_aarch64.zip)
+
+          Each plugin ZIP contains `plugins/windows/<arch>/vertex-region-models-v<version>.dll`. Extract the matching ZIP into `~/.cli-proxy-api`, set `plugins.dir` to `~/.cli-proxy-api/plugins`, and explicitly enable `vertex-region-models`.
 
           <!-- cliproxyapi-linux-release-assets:end -->
           EOF
+          release_version="${GITHUB_REF_NAME#v}"
+          sed -i \
+            -e "s|__REPOSITORY__|${GH_REPO}|g" \
+            -e "s|__TAG__|${GITHUB_REF_NAME}|g" \
+            -e "s|__VERSION__|${release_version}|g" \
+            "$release_notes_file"
 
           git fetch --force --tags
           previous_tag=""
@@ -198,7 +208,9 @@ jobs:
             -o "$archive_dir/$binary_name" ./cmd/server/
 
           if [[ "$GOOS" == "windows" ]]; then
-            plugin_dir="$archive_dir/plugins/windows/$GOARCH"
+            plugin_package_dir="dist/${TARGET}/vertex-region-models"
+            plugin_dir="$plugin_package_dir/plugins/windows/$GOARCH"
+            plugin_archive_name="vertex-region-models_${RELEASE_VERSION}_windows_${ASSET_ARCH}.zip"
             plugin_output="${PWD}/${plugin_dir}/vertex-region-models-v${RELEASE_VERSION}.dll"
             plugin_link_output="${PWD}/${plugin_dir}/vertex_region_models.dll"
             mkdir -p "$plugin_dir"
@@ -211,6 +223,8 @@ jobs:
             mv "$plugin_link_output" "$plugin_output"
             test -f "$plugin_output"
             test ! -f "${plugin_link_output%.dll}.h"
+            powershell -NoProfile -Command "Compress-Archive -Path '${plugin_package_dir}/*' -DestinationPath 'dist/${plugin_archive_name}' -Force"
+            test -f "dist/$plugin_archive_name"
           fi
 
           cp LICENSE README.md README_CN.md config.example.yaml "$archive_dir/"
@@ -222,7 +236,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
-          path: dist/CLIProxyAPI_*
+          path: |
+            dist/CLIProxyAPI_*
+            dist/vertex-region-models_*
           if-no-files-found: error
       - name: Upload release assets
         shell: bash
@@ -231,7 +247,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          assets=(dist/CLIProxyAPI_*.tar.gz dist/CLIProxyAPI_*.zip)
+          assets=(dist/CLIProxyAPI_*.tar.gz dist/CLIProxyAPI_*.zip dist/vertex-region-models_*.zip)
           if [[ ${#assets[@]} -eq 0 ]]; then
             printf 'expected archive assets, found %s\n' "${#assets[@]}" >&2
             printf '%s\n' "${assets[@]}" >&2
@@ -250,12 +266,13 @@ jobs:
           gh release download "$GITHUB_REF_NAME" \
             --pattern 'CLIProxyAPI_*.tar.gz' \
             --pattern 'CLIProxyAPI_*.zip' \
+            --pattern 'vertex-region-models_*.zip' \
             --dir "$tmp_dir" \
             --clobber
           (
             cd "$tmp_dir"
             shopt -s nullglob
-            archives=(CLIProxyAPI_*.tar.gz CLIProxyAPI_*.zip)
+            archives=(CLIProxyAPI_*.tar.gz CLIProxyAPI_*.zip vertex-region-models_*.zip)
             if [[ ${#archives[@]} -eq 0 ]]; then
               echo "No release archives found"
               exit 0
@@ -697,7 +714,7 @@ jobs:
           set -euo pipefail
           cd dist
           shopt -s nullglob
-          archives=(CLIProxyAPI_*.tar.gz CLIProxyAPI_*.zip)
+          archives=(CLIProxyAPI_*.tar.gz CLIProxyAPI_*.zip vertex-region-models_*.zip)
           if [[ ${#archives[@]} -eq 0 ]]; then
             echo "No release archives found"
             exit 0

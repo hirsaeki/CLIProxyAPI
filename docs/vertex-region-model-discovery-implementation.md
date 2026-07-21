@@ -3,6 +3,7 @@
 ## Status
 
 Completed on 2026-07-20.
+Windows plugin distribution revised on 2026-07-22.
 
 ## Problem
 
@@ -25,9 +26,9 @@ than the documented `.rep.googleapis.com` hostnames.
 - Correct native Vertex request endpoints for `global`, `us`, `eu`, and regular
   regional locations.
 - Keep existing plugin and native-provider behavior backward compatible.
-- Discover bundled plugins relative to the executable instead of the caller's
-  working directory.
-- Ship the host and compatible Vertex plugin together in Windows release and
+- Support executable-relative plugin discovery for layouts where the executable
+  and plugin tree share a stable directory.
+- Publish compatible Windows Vertex plugin ZIPs separately from the server and
   WinGet archives without enabling trusted plugin code by default.
 
 ## Non-goals
@@ -103,7 +104,7 @@ The native executor uses these hostnames:
 | `eu` | `https://aiplatform.eu.rep.googleapis.com` |
 | other region | `https://<location>-aiplatform.googleapis.com` |
 
-### Executable-relative discovery and Windows distribution
+### Plugin discovery and Windows distribution
 
 `plugins.dir` accepts `@exe` and `@exe/<relative-path>`. The token resolves to
 the directory containing the running executable, accepts either slash style,
@@ -111,20 +112,21 @@ and rejects paths that escape that directory through `..`. Existing empty,
 tilde, absolute, and working-directory-relative values keep their prior
 behavior.
 
-Windows x64 and ARM64 archives contain:
+Windows releases publish separate x64 and ARM64 plugin ZIPs with this layout:
 
 ```text
-cli-proxy-api.exe
 plugins/
   windows/
     amd64|arm64/
       vertex-region-models-v<release-version>.dll
 ```
 
-The WinGet portable installer copies this archive tree but exposes only
-`cli-proxy-api.exe` through `NestedInstallerFiles`. The DLL is not a portable
-command alias. WinGet does not modify user configuration; both the global plugin
-host and `vertex-region-models` must be enabled explicitly.
+The plugin ZIP is extracted into `~/.cli-proxy-api`, and `plugins.dir` points to
+`~/.cli-proxy-api/plugins`. This location remains stable when WinGet launches
+the server through an alias under `Microsoft\WinGet\Links`. The server archives
+and WinGet portable package contain no plugin DLL. WinGet does not modify user
+configuration; both the global plugin host and `vertex-region-models` must be
+enabled explicitly.
 
 ## Failure and Concurrency Behavior
 
@@ -153,7 +155,7 @@ host and `vertex-region-models` must be enabled explicitly.
 - [x] Document plugin build and configuration in `examples/plugin/README.md`.
 - [x] Add executable-relative plugin directory resolution with escape checks.
 - [x] Add lifecycle host feature negotiation and make old-host registration inert.
-- [x] Bundle versioned Windows x64/ARM64 DLLs in release archives and add matching PR CI builds.
+- [x] Publish versioned Windows x64/ARM64 plugin ZIPs separately from server archives and add matching PR CI builds.
 - [x] Keep the WinGet nested portable list limited to the server executable.
 - [x] Reconcile configuration, plugin, WinGet, and lifecycle documentation with the implementation.
 - [x] Run formatting, focused tests, plugin build, the full Go test suite, and
@@ -227,8 +229,10 @@ its generated DEF file. Because versioned names such as
 `vertex-region-models-v7.2.92.dll` are not accepted by all MinGW linkers, CI
 links as `vertex_region_models.dll`, removes the generated C header, and then
 renames the DLL to the versioned archive name. Pull requests exercise the same
-amd64 and arm64 cross-build path and a workflow regression test locks down the
-toolchain, compiler mapping, and rename behavior. Local verification also
-covered executable-relative path resolution, missing-feature behavior for both
-register and reconfigure, the manifest's DLL-alias exclusion, and a native
-`c-shared` build on the development host.
+amd64 and arm64 cross-build and plugin ZIP layout. Server archives exclude the
+DLL, while Release notes link directly to both plugin assets. A workflow
+regression test locks down the toolchain, compiler mapping, packaging split,
+and rename behavior. Local verification also covered executable-relative path
+resolution, missing-feature behavior for both register and reconfigure, the
+manifest's DLL-alias exclusion, and a native `c-shared` build on the development
+host.

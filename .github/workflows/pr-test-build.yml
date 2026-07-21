@@ -65,7 +65,8 @@ jobs:
           CC: ${{ matrix.cc }}
         run: |
           set -euo pipefail
-          plugin_dir="dist/plugins/windows/$GOARCH"
+          plugin_package_dir="dist/vertex-region-models"
+          plugin_dir="$plugin_package_dir/plugins/windows/$GOARCH"
           plugin_output="${PWD}/${plugin_dir}/vertex-region-models-vci.dll"
           plugin_link_output="${PWD}/${plugin_dir}/vertex_region_models.dll"
           mkdir -p "$plugin_dir"
@@ -78,3 +79,5 @@ jobs:
           mv "$plugin_link_output" "$plugin_output"
           test -f "$plugin_output"
           test ! -f "${plugin_link_output%.dll}.h"
+          powershell -NoProfile -Command "Compress-Archive -Path '${plugin_package_dir}/*' -DestinationPath 'dist/vertex-region-models_ci_windows_${GOARCH}.zip' -Force"
+          test -f "dist/vertex-region-models_ci_windows_${GOARCH}.zip"

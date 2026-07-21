@@ -60,9 +60,9 @@ pprof:
 # Per-plugin enabled only controls plugins.configs.<pluginID>.enabled and does not implicitly change global plugins.enabled.
 plugins:
   enabled: false
-  # @exe resolves relative to the cli-proxy-api executable, independent of the working directory.
+  # A user-profile directory remains stable when the executable is launched through a WinGet alias.
   # Use "plugins" instead when loading development builds from the current working directory.
-  dir: "@exe/plugins"
+  dir: "~/.cli-proxy-api/plugins"
   # Additional plugin store registries. The built-in official registry is always included.
   # store-sources:
   #   - "https://example.com/cliproxy-plugins/registry.json"
@@ -81,7 +81,7 @@ plugins:
       config2: "string"
       config3: 3
       mode: "safe" # enum example: safe, fast
-    # Windows release archives bundle this plugin. It remains opt-in because plugins are trusted code.
+    # Windows releases publish this plugin as a separate ZIP. It remains opt-in because plugins are trusted code.
     # vertex-region-models:
     #   enabled: true
     #   priority: 20

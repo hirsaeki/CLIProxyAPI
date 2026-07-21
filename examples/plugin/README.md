@@ -107,10 +107,10 @@ Artifacts are written to `examples/plugin/bin`.
 its executor. It keeps the host catalog's complete model metadata and filters the
 candidate list using the location stored on each Vertex credential.
 
-Windows release archives bundle this plugin under `plugins/windows/<arch>` with
-the stable plugin ID `vertex-region-models`. Configure `dir: "@exe/plugins"` to
-discover the bundled copy independently of the process working directory. The
-plugin remains opt-in.
+Windows releases publish this plugin separately from the server archives. The
+plugin ZIPs preserve `plugins/windows/<arch>` and use the stable plugin ID
+`vertex-region-models`. Extract the matching ZIP into `~/.cli-proxy-api` and
+configure `dir: "~/.cli-proxy-api/plugins"`. The plugin remains opt-in.
 
 See `vertex-region-models/README.md` for configuration, cache, and failure behavior.
 

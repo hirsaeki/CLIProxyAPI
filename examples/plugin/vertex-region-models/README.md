@@ -29,11 +29,13 @@ The Makefile artifact is named `vertex-region-models-go` with the platform
 extension. Place it in the configured plugin directory without changing that
 basename, or rename it and use the new basename as the plugin configuration key.
 
-Windows release archives bundle a versioned build at
-`plugins/windows/<arch>/vertex-region-models-v<version>.dll`, next to
-`cli-proxy-api.exe`. Its plugin ID is `vertex-region-models`; it is installed by
-WinGet with the rest of the archive but remains disabled until explicitly
-configured.
+Windows releases publish separate x64 and ARM64 plugin ZIPs named
+`vertex-region-models_<version>_windows_<asset-arch>.zip`, where the asset
+architecture is `amd64` or `aarch64`. Each ZIP contains the versioned DLL under
+the Go architecture directory (`plugins/windows/amd64` or
+`plugins/windows/arm64`). Extract the matching ZIP into `~/.cli-proxy-api`
+(`$HOME\.cli-proxy-api` in PowerShell). The server and WinGet archives do not
+contain the plugin.
 
 Release and pull-request builds use a pinned LLVM-MinGW x86_64 host package to
 cross-compile both Windows architectures. The matrix selects
@@ -48,7 +50,7 @@ some MinGW linkers reject the versioned name.
 ```yaml
 plugins:
   enabled: true
-  dir: "@exe/plugins"
+  dir: "~/.cli-proxy-api/plugins"
   configs:
     vertex-region-models:
       enabled: true
@@ -59,8 +61,9 @@ plugins:
 ```
 
 Use `dir: "plugins"` and the `vertex-region-models-go` configuration key for
-the unrenamed local Makefile artifact. `@exe` is resolved by the host and cannot
-escape the executable directory through `..` segments.
+the unrenamed local Makefile artifact. `@exe` remains available for layouts
+where the executable and plugin tree share a stable directory, but it is not
+recommended for WinGet aliases under `Microsoft\WinGet\Links`.
 
 The plugin advertises its model provider capability only when the host lifecycle
 request includes the `model-provider-native-candidates` feature. Loading it on an
