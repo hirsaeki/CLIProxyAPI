@@ -16,8 +16,8 @@ func TestDecodePluginConfigDefaults(t *testing.T) {
 	if cfg.CacheTTL != 6*time.Hour {
 		t.Fatalf("CacheTTL = %v, want 6h", cfg.CacheTTL)
 	}
-	if !cfg.FailOpen {
-		t.Fatal("FailOpen = false, want true")
+	if cfg.FailOpen {
+		t.Fatal("FailOpen = true, want false")
 	}
 }
 

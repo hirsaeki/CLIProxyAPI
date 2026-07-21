@@ -36,6 +36,8 @@ func TestVertexRegionModelsPluginCABI(t *testing.T) {
 <thead><tr><th></th><th>Iowa (us-central1)</th></tr></thead>
 <tbody>
 <tr><td>Allowed <code>(gemini-allowed)</code></td><td aria-label="Supported"></td></tr>
+<tr><td><a>Gemini 3.1 Pro</a> <code>(gemini-3.1-pro-preview)</code></td><td aria-label="Supported"></td></tr>
+<tr><td><a>Gemini Docs Only</a> <code>(gemini-docs-only)</code></td><td aria-label="Supported"></td></tr>
 <tr><td>Blocked <code>(gemini-blocked)</code></td><td></td></tr>
 </tbody></table>`))
 	}))
@@ -81,18 +83,25 @@ func TestVertexRegionModelsPluginCABI(t *testing.T) {
 		Metadata: map[string]any{"location": "us-central1"},
 	}, []*registry.ModelInfo{
 		{ID: "gemini-allowed", DisplayName: "Allowed", InputTokenLimit: 100, Thinking: thinking},
+		{ID: "gemini-3.1-pro", DisplayName: "Gemini 3.1 Pro", InputTokenLimit: 200, Thinking: thinking},
 		{ID: "gemini-blocked", DisplayName: "Blocked"},
 	})
 	if result.Err != nil {
 		t.Fatalf("ModelsForAuth() error = %v", result.Err)
 	}
-	if !result.Handled || result.Provider != "vertex" || len(result.Models) != 1 {
-		t.Fatalf("ModelsForAuth() = %#v, want one handled Vertex model", result)
+	if !result.Handled || result.Provider != "vertex" || len(result.Models) != 3 {
+		t.Fatalf("ModelsForAuth() = %#v, want three handled Vertex models", result)
 	}
 	if result.Models[0].ID != "gemini-allowed" || result.Models[0].DisplayName != "Allowed" || result.Models[0].InputTokenLimit != 100 {
 		t.Fatalf("filtered model metadata = %#v", result.Models[0])
 	}
 	if !reflect.DeepEqual(result.Models[0].Thinking, thinking) {
 		t.Fatalf("filtered model thinking = %#v, want %#v", result.Models[0].Thinking, thinking)
+	}
+	if result.Models[1].ID != "gemini-3.1-pro-preview" || result.Models[1].InputTokenLimit != 200 || !reflect.DeepEqual(result.Models[1].Thinking, thinking) {
+		t.Fatalf("preview model metadata = %#v", result.Models[1])
+	}
+	if result.Models[2].ID != "gemini-docs-only" || result.Models[2].DisplayName != "Gemini Docs Only" || result.Models[2].OwnedBy != "google" {
+		t.Fatalf("documentation-only model metadata = %#v", result.Models[2])
 	}
 }

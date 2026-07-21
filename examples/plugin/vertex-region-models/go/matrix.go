@@ -9,7 +9,12 @@ import (
 	"golang.org/x/net/html"
 )
 
-type locationMatrix map[string]map[string]struct{}
+type documentedModel struct {
+	ID          string
+	DisplayName string
+}
+
+type locationMatrix map[string][]documentedModel
 
 var (
 	locationSuffixPattern = regexp.MustCompile(`\(([a-z0-9]+(?:-[a-z0-9]+)*)\)\s*$`)
@@ -61,27 +66,79 @@ func parseLocationTable(table *html.Node, matrix locationMatrix) {
 	}
 	for _, location := range locations {
 		if matrix[location] == nil {
-			matrix[location] = make(map[string]struct{})
+			matrix[location] = []documentedModel{}
 		}
 	}
 
 	tbody := firstDescendant(table, "tbody")
+	category := ""
 	for _, row := range directChildren(tbody, "tr") {
 		cells := directChildren(row, "td")
+		if len(cells) == 1 && hasClass(cells[0], "vertex-ai-table-heading") {
+			category = strings.ToLower(strings.TrimSpace(nodeText(cells[0])))
+			continue
+		}
+		if category != "" && category != "gemini models" {
+			continue
+		}
 		if len(cells) < 2 {
 			continue
 		}
-		modelID := modelIDFromCell(cells[0])
-		if modelID == "" {
+		model := documentedModelFromCell(cells[0])
+		if model.ID == "" {
 			continue
 		}
 		for index, location := range locations {
 			cellIndex := index + 1
 			if cellIndex < len(cells) && hasSupportedLabel(cells[cellIndex]) {
-				matrix[location][strings.ToLower(modelID)] = struct{}{}
+				matrix[location] = appendDocumentedModel(matrix[location], model)
 			}
 		}
 	}
+}
+
+func hasClass(node *html.Node, target string) bool {
+	if node == nil {
+		return false
+	}
+	for _, attr := range node.Attr {
+		if !strings.EqualFold(attr.Key, "class") {
+			continue
+		}
+		for _, className := range strings.Fields(attr.Val) {
+			if className == target {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func appendDocumentedModel(models []documentedModel, model documentedModel) []documentedModel {
+	for _, existing := range models {
+		if existing.ID == model.ID {
+			return models
+		}
+	}
+	return append(models, model)
+}
+
+func documentedModelFromCell(cell *html.Node) documentedModel {
+	modelID := strings.ToLower(modelIDFromCell(cell))
+	if modelID == "" {
+		return documentedModel{}
+	}
+	displayName := ""
+	if link := firstDescendant(cell, "a"); link != nil {
+		displayName = strings.TrimSpace(nodeText(link))
+	}
+	if displayName == "" {
+		displayName = strings.TrimSpace(strings.Replace(nodeText(cell), "("+modelID+")", "", 1))
+	}
+	if strings.HasSuffix(modelID, "-preview") && !strings.Contains(strings.ToLower(displayName), "preview") {
+		displayName += " Preview"
+	}
+	return documentedModel{ID: modelID, DisplayName: strings.TrimSpace(displayName)}
 }
 
 func modelIDFromCell(cell *html.Node) string {

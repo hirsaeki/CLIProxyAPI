@@ -11,10 +11,12 @@ import (
 )
 
 type matrixFetcher func(callbackID, rawURL string, headers http.Header) (pluginapi.HTTPResponse, error)
+type matrixWarning func(callbackID string, err error)
 
 type matrixCache struct {
 	mu           sync.Mutex
 	fetch        matrixFetcher
+	warn         matrixWarning
 	now          func() time.Time
 	sourceURL    string
 	matrix       locationMatrix
@@ -23,8 +25,12 @@ type matrixCache struct {
 	lastModified string
 }
 
-func newMatrixCache(fetch matrixFetcher) *matrixCache {
-	return &matrixCache{fetch: fetch, now: time.Now}
+func newMatrixCache(fetch matrixFetcher, warnings ...matrixWarning) *matrixCache {
+	cache := &matrixCache{fetch: fetch, now: time.Now}
+	if len(warnings) > 0 {
+		cache.warn = warnings[0]
+	}
+	return cache
 }
 
 func (c *matrixCache) reset() {
@@ -68,7 +74,7 @@ func (c *matrixCache) get(callbackID string, cfg pluginConfig) (locationMatrix, 
 	}
 	resp, errFetch := c.fetch(callbackID, cfg.DocsURL, headers)
 	if errFetch != nil {
-		return c.staleOrError(fmt.Errorf("fetch location matrix: %w", errFetch), now, cfg.CacheTTL)
+		return c.staleOrError(callbackID, fmt.Errorf("fetch location matrix: %w", errFetch), now, cfg.CacheTTL)
 	}
 	if resp.StatusCode == http.StatusNotModified {
 		if c.matrix == nil {
@@ -78,11 +84,11 @@ func (c *matrixCache) get(callbackID string, cfg pluginConfig) (locationMatrix, 
 		return c.matrix, nil
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return c.staleOrError(fmt.Errorf("location matrix returned HTTP %d", resp.StatusCode), now, cfg.CacheTTL)
+		return c.staleOrError(callbackID, fmt.Errorf("location matrix returned HTTP %d", resp.StatusCode), now, cfg.CacheTTL)
 	}
 	matrix, errParse := parseLocationMatrix(bytes.NewReader(resp.Body))
 	if errParse != nil {
-		return c.staleOrError(errParse, now, cfg.CacheTTL)
+		return c.staleOrError(callbackID, errParse, now, cfg.CacheTTL)
 	}
 	c.matrix = matrix
 	c.expiresAt = now.Add(cfg.CacheTTL)
@@ -91,8 +97,11 @@ func (c *matrixCache) get(callbackID string, cfg pluginConfig) (locationMatrix, 
 	return c.matrix, nil
 }
 
-func (c *matrixCache) staleOrError(err error, now time.Time, ttl time.Duration) (locationMatrix, error) {
+func (c *matrixCache) staleOrError(callbackID string, err error, now time.Time, ttl time.Duration) (locationMatrix, error) {
 	if c.matrix != nil {
+		if c.warn != nil {
+			c.warn(callbackID, err)
+		}
 		retryDelay := ttl
 		if retryDelay <= 0 || retryDelay > 5*time.Minute {
 			retryDelay = 5 * time.Minute

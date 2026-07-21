@@ -27,7 +27,7 @@ func decodePluginConfig(raw []byte) (pluginConfig, error) {
 	cfg := pluginConfig{
 		DocsURL:  defaultDocsURL,
 		CacheTTL: 6 * time.Hour,
-		FailOpen: true,
+		FailOpen: false,
 	}
 	if len(raw) == 0 {
 		return cfg, nil

@@ -100,9 +100,16 @@ type hostHTTPRequest struct {
 	Headers        http.Header `json:"headers,omitempty"`
 }
 
+type hostLogRequest struct {
+	HostCallbackID string         `json:"host_callback_id,omitempty"`
+	Level          string         `json:"level,omitempty"`
+	Message        string         `json:"message,omitempty"`
+	Fields         map[string]any `json:"fields,omitempty"`
+}
+
 var (
 	runtimeConfig atomic.Value
-	regionModels  = &discoveryService{cache: newMatrixCache(callHostHTTP)}
+	regionModels  = &discoveryService{cache: newMatrixCache(callHostHTTP, logCachedMatrixFallback), log: callHostLog}
 )
 
 func init() {
@@ -221,7 +228,7 @@ func pluginRegistration(nativeCandidates bool) registration {
 		SchemaVersion: pluginabi.SchemaVersion,
 		Metadata: pluginapi.Metadata{
 			Name:             "vertex-region-models",
-			Version:          "0.1.0",
+			Version:          "0.2.0",
 			Author:           "router-for-me",
 			GitHubRepository: "https://github.com/router-for-me/CLIProxyAPI",
 			Logo:             "https://raw.githubusercontent.com/router-for-me/CLIProxyAPI/main/docs/logo.png",
@@ -259,6 +266,27 @@ func callHostHTTP(callbackID, rawURL string, headers http.Header) (pluginapi.HTT
 		return pluginapi.HTTPResponse{}, fmt.Errorf("decode host HTTP response: %w", errUnmarshal)
 	}
 	return resp, nil
+}
+
+func callHostLog(callbackID, level, message string, fields map[string]any) {
+	if fields == nil {
+		fields = make(map[string]any)
+	}
+	fields["plugin"] = "vertex-region-models"
+	_, _ = callHost(pluginabi.MethodHostLog, hostLogRequest{
+		HostCallbackID: callbackID,
+		Level:          level,
+		Message:        message,
+		Fields:         fields,
+	})
+}
+
+func logCachedMatrixFallback(callbackID string, err error) {
+	fields := map[string]any{}
+	if err != nil {
+		fields["error"] = err.Error()
+	}
+	callHostLog(callbackID, "warn", "vertex region model catalog refresh failed; using cached catalog", fields)
 }
 
 func callHost(method string, payload any) (json.RawMessage, error) {

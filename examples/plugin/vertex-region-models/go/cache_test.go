@@ -62,12 +62,17 @@ func TestMatrixCacheUsesTTLAndConditionalRequest(t *testing.T) {
 func TestMatrixCacheRetainsLastKnownGoodOnRefreshFailure(t *testing.T) {
 	now := time.Unix(1000, 0)
 	var calls int
+	var warningCallbackID string
+	var warning error
 	cache := newMatrixCache(func(callbackID, rawURL string, headers http.Header) (pluginapi.HTTPResponse, error) {
 		calls++
 		if calls == 1 {
 			return pluginapi.HTTPResponse{StatusCode: http.StatusOK, Body: []byte(matrixFixture)}, nil
 		}
 		return pluginapi.HTTPResponse{}, errors.New("docs unavailable")
+	}, func(callbackID string, err error) {
+		warningCallbackID = callbackID
+		warning = err
 	})
 	cache.now = func() time.Time { return now }
 	cfg := pluginConfig{DocsURL: "https://docs.example/locations", CacheTTL: time.Minute, FailOpen: true}
@@ -85,6 +90,9 @@ func TestMatrixCacheRetainsLastKnownGoodOnRefreshFailure(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Fatalf("fetch calls during stale retry backoff = %d, want 2", calls)
+	}
+	if warningCallbackID != "callback" || warning == nil || warning.Error() != "fetch location matrix: docs unavailable" {
+		t.Fatalf("stale warning = callback=%q error=%v", warningCallbackID, warning)
 	}
 }
 

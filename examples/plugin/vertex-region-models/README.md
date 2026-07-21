@@ -1,13 +1,15 @@
 # Vertex Region Models Plugin
 
-This Go C-ABI plugin filters the native Vertex model catalog independently for
-each credential location. It fetches Google's endpoint location matrix through
-the host HTTP callback and returns only candidate model IDs marked as supported
-for the credential's `location`.
+This Go C-ABI plugin resolves the Vertex model catalog independently for each
+credential location. It fetches Google's endpoint location matrix through the
+host HTTP callback and treats its supported model IDs, or the last successfully
+parsed cached copy, as authoritative for the credential's `location`.
 
-The plugin does not replace the native Vertex executor and does not invent model
-metadata. Each selected model is returned with the complete host-provided
-metadata, including thinking limits, token limits, and modalities.
+The plugin does not replace the native Vertex executor. Exact native candidates
+retain their complete host metadata. A documented `-preview` model can reuse the
+metadata of its non-preview counterpart. Models with no safe native counterpart
+receive only conservative identity metadata; unsupported token, thinking, and
+modality details are not guessed.
 
 ## Build
 
@@ -57,7 +59,7 @@ plugins:
       priority: 20
       docs_url: "https://docs.cloud.google.com/gemini-enterprise-agent-platform/resources/locations"
       cache_ttl_seconds: 21600
-      fail_open: true
+      fail_open: false
 ```
 
 Use `dir: "plugins"` and the `vertex-region-models-go` configuration key for
@@ -74,7 +76,7 @@ Defaults:
 
 - `docs_url`: the official Google Gemini Enterprise Agent Platform locations page
 - `cache_ttl_seconds`: `21600` (six hours)
-- `fail_open`: `true`
+- `fail_open`: `false`
 
 The plugin reads `location` from runtime auth metadata first, then from persisted
 credential JSON, and defaults to `us-central1` for compatibility with the native
@@ -82,26 +84,38 @@ Vertex credential loader.
 
 ## Discovery and Cache Behavior
 
-The plugin parses location columns from HTML table headers and considers only
-cells whose `aria-label` is `Supported`. It intersects those IDs with the
-credential's native candidate models; documentation-only IDs are not added.
+The plugin parses location columns from HTML table headers, limits discovery to
+the page's `Gemini models` sections, and considers only cells whose `aria-label`
+is `Supported`. This avoids registering separate embedding and media APIs that
+the native Gemini executor does not implement. For a known location it returns
+the documented Gemini IDs in page order. Native candidates are lookup-only
+metadata donors:
+
+- an exact ID keeps all native metadata;
+- a documented `-preview` ID can clone metadata from its non-preview candidate;
+- a documentation-only ID receives `ID`, display name, `object`, owner, type,
+  and provider-native name without invented capability limits.
+
+Native candidate IDs absent from the documented location are not returned.
 
 The last successfully parsed matrix is cached in memory. Refresh requests use
 `ETag` and `Last-Modified` validators when the server provides them. A failed
 refresh keeps the last known good matrix and retries after at most five minutes.
 
-Before the first successful fetch:
+Before the first successful fetch, or for an unknown credential location:
 
-- `fail_open: true` returns all native candidates unchanged.
-- `fail_open: false` returns an empty model list.
+- `fail_open: false` (the default) returns an empty model list so an unverified
+  native catalog cannot become authoritative accidentally.
+- `fail_open: true` explicitly returns all native candidates unchanged as an
+  operator-selected emergency fallback.
 
-An unknown credential location follows the same failure policy. A known
-location with no matching candidate models returns an empty list.
+Successful discovery and failures are reported through the host logger with the
+credential location and model counts. Credential contents are not logged.
 
 ## Scope and Limitations
 
 - The documentation page is HTML and can change without an API version bump.
 - Documentation can lag provider rollout.
-- The plugin filters the current host catalog. It cannot add a model that is
-  absent from that catalog without losing authoritative model metadata.
+- Documentation-only models intentionally have incomplete capability metadata
+  until a matching native candidate becomes available.
 - Cache state is process-local and is rebuilt after restart.

@@ -4,6 +4,7 @@
 
 Completed on 2026-07-20.
 Windows plugin distribution revised on 2026-07-22.
+Authoritative model discovery revised on 2026-07-22.
 
 ## Problem
 
@@ -19,8 +20,10 @@ than the documented `.rep.googleapis.com` hostnames.
 ## Goals
 
 - Resolve Vertex model availability independently for each credential location.
-- Preserve the complete model metadata supplied by the host catalog while
-  filtering model IDs against Google's location matrix.
+- Treat Google's location matrix and its last successfully parsed cache as the
+  authoritative source of Vertex model IDs for each credential.
+- Reuse host model metadata where it matches without allowing the host catalog
+  to suppress documented models.
 - Keep location discovery, HTML parsing, caching, and failure policy outside the
   native Vertex implementation so upstream synchronization remains small.
 - Correct native Vertex request endpoints for `global`, `us`, `eu`, and regular
@@ -37,7 +40,6 @@ than the documented `.rep.googleapis.com` hostnames.
 - Disabling the remote model catalog updater.
 - Removing the local model overlay escape hatch.
 - Treating the documentation HTML as an infallible provider API contract.
-- Adding models that are absent from the host's current Vertex catalog.
 
 ## Design
 
@@ -51,8 +53,8 @@ executor.
 Add `CandidateModels` to `AuthModelRequest`. For native providers, the service
 first resolves the credential's normal model list, including configured model
 overrides, exclusions, and provider-specific capability enrichment. The plugin
-then receives those models and returns a filtered subset. Returning full model
-objects preserves thinking limits, token limits, modalities, and other metadata.
+uses those models only as optional metadata donors. They do not constrain the
+IDs returned from the documented location matrix.
 
 Custom plugin providers keep the existing pre-native discovery path with an
 empty candidate list.
@@ -74,14 +76,18 @@ The plugin:
 2. Reads `location` from auth metadata, then persisted credential JSON, with
    `us-central1` as the compatibility default.
 3. Fetches the official Google locations page through the host HTTP callback.
-4. Parses location columns and cells whose `aria-label` is `Supported`.
-5. Intersects the discovered model IDs with `CandidateModels` and returns the
-   original candidate objects unchanged.
+4. Parses location columns and cells whose `aria-label` is `Supported` from the
+   `Gemini models` sections, excluding separate embedding and media APIs.
+5. Returns the documented supported IDs in page order. Exact candidates retain
+   their metadata, documented `-preview` IDs can reuse a non-preview candidate,
+   and documentation-only IDs receive conservative identity metadata.
 6. Caches the last successful matrix in memory with a configurable TTL and uses
    conditional `ETag` or `Last-Modified` requests when available.
-7. Defaults to fail-open behavior: a fetch error, parse error, or unknown
-   location returns the unfiltered candidates. A successful known location with
-   no matching candidates returns an empty model list.
+7. Defaults to fail-closed behavior: before the first successful fetch, a fetch
+   error, parse error, or unknown location returns an empty model list. Explicit
+   `fail_open: true` retains the legacy native-candidate fallback.
+8. Reports resolved location/model counts and discovery failures through the
+   host logging callback without credential contents.
 
 The default source is:
 
@@ -91,7 +97,8 @@ Supported plugin configuration fields:
 
 - `docs_url`: alternate matrix URL, primarily for controlled mirrors and tests.
 - `cache_ttl_seconds`: positive cache lifetime.
-- `fail_open`: whether discovery failures retain all candidate models.
+- `fail_open`: whether discovery failures explicitly fall back to all native
+  candidate models; defaults to `false`.
 
 ### Vertex endpoint resolution
 
@@ -135,6 +142,8 @@ enabled explicitly.
 - Only a successfully parsed non-empty location matrix replaces the cached
   matrix.
 - A `304 Not Modified` response refreshes the cache lifetime without reparsing.
+- A refresh failure keeps the last successfully parsed matrix authoritative and
+  retries after at most five minutes.
 - No credential contents, access tokens, or service-account fields are logged.
 - Existing model exclusions, aliases, and credential prefixes are still applied
   by the host registration path.
@@ -147,11 +156,11 @@ enabled explicitly.
 - [x] Move native-provider plugin model discovery after candidate construction
   while preserving custom plugin provider behavior.
 - [x] Add unit tests for provider matching, RPC schema propagation, candidate
-  cloning, and native model filtering.
+  metadata reuse, and authoritative model discovery.
 - [x] Correct and test Vertex multi-region endpoint construction.
-- [x] Implement and test location extraction, HTML matrix parsing, cache
-  behavior, fail-open/fail-closed behavior, and candidate filtering in the Go
-  plugin.
+- [x] Implement and test location extraction, ordered HTML model parsing, cache
+  behavior, fail-open/fail-closed behavior, metadata reuse, and
+  documentation-only model synthesis in the Go plugin.
 - [x] Document plugin build and configuration in `examples/plugin/README.md`.
 - [x] Add executable-relative plugin directory resolution with escape checks.
 - [x] Add lifecycle host feature negotiation and make old-host registration inert.
@@ -178,24 +187,24 @@ enabled explicitly.
 - The documentation page is HTML, not a stable machine API. The parser therefore
   relies on semantic table content and `aria-label`, not line layout, and the
   cache keeps the last known good matrix.
-- Documentation can lag actual provider rollout. Fail-open avoids removing all
-  models during discovery failure, but cannot prove provider availability.
-- This implementation deliberately filters the host catalog and does not invent
-  docs-only model metadata. A separate authenticated publisher-model discovery
-  source would be needed to add models missing from the catalog safely.
+- Documentation can lag actual provider rollout. Operators can explicitly use
+  `fail_open: true`, but that temporarily makes the native catalog authoritative.
+- Documentation-only models have intentionally incomplete capability metadata.
+  The plugin does not guess token limits, thinking levels, or modalities.
 
 ## Final Results
 
-The implementation adds a generic model-filter hook to the plugin API and uses
-it from a model-only Vertex plugin. Native model discovery still owns model
-metadata and the native Vertex executor still owns upstream requests. The
-plugin receives the resolved per-credential candidates and returns their
-intersection with the credential location's documentation matrix.
+The implementation adds a native-provider model hook to the plugin API and uses
+it from a model-only Vertex plugin. The native Vertex executor still owns
+upstream requests. The plugin makes the credential location's documentation
+matrix authoritative for IDs, while resolved native candidates contribute
+metadata without limiting which documented models are registered.
 
 The plugin was loaded through the real C ABI in an opt-in integration test. The
 test verified registration with `model_provider_identifiers: ["vertex"]`, no
 auth-provider or executor capability, host HTTP callback execution, location
-filtering, and preservation of thinking and token-limit metadata.
+selection, `-preview` metadata reuse, documentation-only model registration,
+and preservation of thinking and token-limit metadata.
 
 Verification completed successfully:
 
@@ -211,11 +220,11 @@ Verification completed successfully:
 - `go build -o test-output ./cmd/server`, followed by removal of `test-output`
 - `git diff --check`
 
-The delivered scope does not call an authenticated PublisherModels API and does
-not synthesize metadata for documentation-only models. The location matrix is
-therefore a filter over the host catalog, not an additional source of model
-records. Cache state is process-local; a restart performs a fresh fetch, while
-refresh failures within a process retain the last successfully parsed matrix.
+The delivered scope does not call an authenticated PublisherModels API.
+Documentation-only models are registered with conservative identity metadata;
+capability fields remain empty until a safe native donor exists. Cache state is
+process-local; a restart performs a fresh fetch, while refresh failures within a
+process retain the last successfully parsed matrix.
 
 Windows release builds now cross-compile both plugin architectures on
 `windows-latest` with the pinned LLVM-MinGW `20260616` x86_64 host package. The

@@ -11,9 +11,16 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
 
-func TestDiscoveryFiltersCandidatesAndPreservesMetadata(t *testing.T) {
+func TestDiscoveryUsesDocumentationAsAuthoritativeCatalog(t *testing.T) {
+	const authoritativeFixture = `<!doctype html><table>
+<thead><tr><th></th><th>US (us)</th></tr></thead>
+<tbody>
+<tr><td><a>Gemini Multi</a><code>(gemini-multi)</code></td><td aria-label="Supported"></td></tr>
+<tr><td><a>Gemini 3.1 Pro</a><code>(gemini-3.1-pro-preview)</code></td><td aria-label="Supported"></td></tr>
+<tr><td><a>Gemini Docs Only</a><code>(gemini-docs-only)</code></td><td aria-label="Supported"></td></tr>
+</tbody></table>`
 	service := &discoveryService{cache: newMatrixCache(func(callbackID, rawURL string, headers http.Header) (pluginapi.HTTPResponse, error) {
-		return pluginapi.HTTPResponse{StatusCode: http.StatusOK, Body: []byte(matrixFixture)}, nil
+		return pluginapi.HTTPResponse{StatusCode: http.StatusOK, Body: []byte(authoritativeFixture)}, nil
 	})}
 	request := authModelRPCRequest{
 		AuthModelRequest: pluginapi.AuthModelRequest{
@@ -22,6 +29,7 @@ func TestDiscoveryFiltersCandidatesAndPreservesMetadata(t *testing.T) {
 			Metadata:     map[string]any{"location": "us"},
 			CandidateModels: []pluginapi.ModelInfo{
 				{ID: "gemini-multi", DisplayName: "Multi", SupportedParameters: []string{"temperature"}, Thinking: &pluginapi.ThinkingSupport{Min: 128, Max: 32768}},
+				{ID: "gemini-3.1-pro", DisplayName: "Gemini 3.1 Pro", InputTokenLimit: 1048576, Thinking: &pluginapi.ThinkingSupport{Min: 128, Max: 32768}},
 				{ID: "gemini-unsupported", DisplayName: "Unsupported"},
 			},
 		},
@@ -32,23 +40,43 @@ func TestDiscoveryFiltersCandidatesAndPreservesMetadata(t *testing.T) {
 	if errModels != nil {
 		t.Fatalf("modelsForAuth() error = %v", errModels)
 	}
-	if response.Provider != "vertex" || len(response.Models) != 1 {
+	if response.Provider != "vertex" || len(response.Models) != 3 {
 		t.Fatalf("response = %#v", response)
 	}
-	model := response.Models[0]
-	if model.ID != "gemini-multi" || model.DisplayName != "Multi" || model.Thinking == nil || model.Thinking.Max != 32768 {
-		t.Fatalf("filtered model metadata = %#v", model)
+	exact := response.Models[0]
+	if exact.ID != "gemini-multi" || exact.DisplayName != "Multi" || exact.Thinking == nil || exact.Thinking.Max != 32768 {
+		t.Fatalf("exact model metadata = %#v", exact)
+	}
+	preview := response.Models[1]
+	if preview.ID != "gemini-3.1-pro-preview" || preview.Name != "models/gemini-3.1-pro-preview" || preview.DisplayName != "Gemini 3.1 Pro Preview" || preview.InputTokenLimit != 1048576 || preview.Thinking == nil || preview.Thinking.Max != 32768 {
+		t.Fatalf("preview model metadata = %#v", preview)
+	}
+	docsOnly := response.Models[2]
+	if docsOnly.ID != "gemini-docs-only" || docsOnly.Name != "models/gemini-docs-only" || docsOnly.DisplayName != "Gemini Docs Only" || docsOnly.Object != "model" || docsOnly.OwnedBy != "google" || docsOnly.Type != "gemini" {
+		t.Fatalf("docs-only model metadata = %#v", docsOnly)
+	}
+	if docsOnly.Description != "" || docsOnly.InputTokenLimit != 0 || docsOnly.OutputTokenLimit != 0 || docsOnly.Thinking != nil || len(docsOnly.SupportedGenerationMethods) != 0 || len(docsOnly.SupportedInputModalities) != 0 || len(docsOnly.SupportedOutputModalities) != 0 {
+		t.Fatalf("docs-only model has invented capability metadata = %#v", docsOnly)
 	}
 }
 
 func TestDiscoveryFailurePolicy(t *testing.T) {
+	type capturedLog struct {
+		callbackID string
+		level      string
+		message    string
+		fields     map[string]any
+	}
+	var logs []capturedLog
 	service := &discoveryService{cache: newMatrixCache(func(callbackID, rawURL string, headers http.Header) (pluginapi.HTTPResponse, error) {
 		return pluginapi.HTTPResponse{}, errors.New("network down")
-	})}
+	}), log: func(callbackID, level, message string, fields map[string]any) {
+		logs = append(logs, capturedLog{callbackID: callbackID, level: level, message: message, fields: fields})
+	}}
 	request := authModelRPCRequest{AuthModelRequest: pluginapi.AuthModelRequest{
 		Metadata:        map[string]any{"location": "us"},
 		CandidateModels: []pluginapi.ModelInfo{{ID: "gemini-candidate"}},
-	}}
+	}, HostCallbackID: "callback"}
 
 	openResponse, errOpen := service.modelsForAuth(request, pluginConfig{DocsURL: defaultDocsURL, CacheTTL: time.Hour, FailOpen: true})
 	if errOpen != nil || len(openResponse.Models) != 1 {
@@ -57,6 +85,9 @@ func TestDiscoveryFailurePolicy(t *testing.T) {
 	closedResponse, errClosed := service.modelsForAuth(request, pluginConfig{DocsURL: defaultDocsURL, CacheTTL: time.Hour, FailOpen: false})
 	if errClosed != nil || len(closedResponse.Models) != 0 {
 		t.Fatalf("fail-closed response = %#v, %v", closedResponse, errClosed)
+	}
+	if len(logs) != 2 || logs[0].callbackID != "callback" || logs[0].level != "warn" || logs[0].message != "vertex region model catalog unavailable" || logs[0].fields["location"] != "us" {
+		t.Fatalf("failure logs = %#v", logs)
 	}
 }
 

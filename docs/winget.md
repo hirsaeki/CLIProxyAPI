@@ -82,7 +82,7 @@ plugins:
     vertex-region-models:
       enabled: true
       priority: 20
-      fail_open: true
+      fail_open: false
 ```
 
 The host expands `~` to the current user's profile directory. Do not use
