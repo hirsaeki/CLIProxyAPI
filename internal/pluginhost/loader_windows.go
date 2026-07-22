@@ -39,6 +39,11 @@ type windowsPluginAPI struct {
 	shutdown   uintptr
 }
 
+type windowsHostCallResult struct {
+	payload []byte
+	err     error
+}
+
 var (
 	windowsHostCallbackID      atomic.Uintptr
 	windowsHostCallbackEntries sync.Map
@@ -61,7 +66,9 @@ type dynamicLibraryClient struct {
 	tempPath string
 	hostAPI  *windowsHostAPI
 	hostCtx  *uintptr
-	api      windowsPluginAPI
+	// Windows Go c-shared DLL calls can lose response buffers when invoked concurrently.
+	callMu sync.Mutex
+	api    windowsPluginAPI
 }
 
 func defaultPluginLoader() pluginLoader {
@@ -251,7 +258,12 @@ func shadowPluginMatches(path string, size int64, digest string) bool {
 }
 
 func (c *dynamicLibraryClient) Call(ctx context.Context, method string, request []byte) ([]byte, error) {
-	if c == nil || c.api.call == 0 {
+	if c == nil {
+		return nil, fmt.Errorf("plugin client is closed")
+	}
+	c.callMu.Lock()
+	defer c.callMu.Unlock()
+	if c.api.call == 0 {
 		return nil, fmt.Errorf("plugin client is closed")
 	}
 	if ctx != nil {
@@ -351,7 +363,16 @@ func windowsHostCall(hostCtx uintptr, methodPtr uintptr, requestPtr uintptr, req
 		request = append([]byte(nil), request...)
 	}
 	ctx := withHostCallbackPluginID(context.Background(), entry.pluginID)
-	resp, errCall := entry.host.callFromPlugin(ctx, windowsString(methodPtr), request)
+	method := windowsString(methodPtr)
+	// Keep blocking host work off the foreign-thread callback stack. Running HTTP or
+	// logging work inline can cause the enclosing Go c-shared DLL call to lose its response.
+	resultCh := make(chan windowsHostCallResult, 1)
+	go func() {
+		resultCh <- callHostFromWindowsCallback(entry, ctx, method, request)
+	}()
+	result := <-resultCh
+	resp := result.payload
+	errCall := result.err
 	if errCall != nil {
 		resp = marshalRPCError("host_call_failed", errCall.Error())
 	}
@@ -367,6 +388,16 @@ func windowsHostCall(hostCtx uintptr, methodPtr uintptr, requestPtr uintptr, req
 	response.ptr = mem
 	response.len = uintptr(len(resp))
 	return 0
+}
+
+func callHostFromWindowsCallback(entry dynamicHostCallbackEntry, ctx context.Context, method string, request []byte) (result windowsHostCallResult) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			result = windowsHostCallResult{err: fmt.Errorf("host callback panic: %v", recovered)}
+		}
+	}()
+	result.payload, result.err = entry.host.callFromPlugin(ctx, method, request)
+	return result
 }
 
 func windowsHostFree(ptr uintptr, len uintptr) uintptr {

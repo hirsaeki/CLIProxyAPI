@@ -1,4 +1,4 @@
-//go:build cgo && (linux || darwin || freebsd)
+//go:build windows || (cgo && (linux || darwin || freebsd))
 
 package pluginhost
 
@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync"
 	"testing"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
@@ -103,5 +104,39 @@ func TestVertexRegionModelsPluginCABI(t *testing.T) {
 	}
 	if result.Models[2].ID != "gemini-docs-only" || result.Models[2].DisplayName != "Gemini Docs Only" || result.Models[2].OwnedBy != "google" {
 		t.Fatalf("documentation-only model metadata = %#v", result.Models[2])
+	}
+
+	const concurrentCalls = 5
+	start := make(chan struct{})
+	errCh := make(chan error, concurrentCalls)
+	var wg sync.WaitGroup
+	for index := range concurrentCalls {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			concurrentResult := host.ModelsForAuth(context.Background(), &coreauth.Auth{
+				ID:       fmt.Sprintf("vertex-auth-%d", index),
+				Provider: "vertex",
+				Metadata: map[string]any{"location": "us-central1"},
+			}, []*registry.ModelInfo{{ID: "gemini-3.1-pro", DisplayName: "Gemini 3.1 Pro"}})
+			if concurrentResult.Err != nil {
+				errCh <- concurrentResult.Err
+				return
+			}
+			if !concurrentResult.Handled || len(concurrentResult.Models) != 3 {
+				errCh <- fmt.Errorf("concurrent ModelsForAuth() = %#v", concurrentResult)
+				return
+			}
+			errCh <- nil
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errCh)
+	for errConcurrent := range errCh {
+		if errConcurrent != nil {
+			t.Fatalf("concurrent model discovery error = %v", errConcurrent)
+		}
 	}
 }

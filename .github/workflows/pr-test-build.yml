@@ -81,3 +81,14 @@ jobs:
           test ! -f "${plugin_link_output%.dll}.h"
           powershell -NoProfile -Command "Compress-Archive -Path '${plugin_package_dir}/*' -DestinationPath 'dist/vertex-region-models_ci_windows_${GOARCH}.zip' -Force"
           test -f "dist/vertex-region-models_ci_windows_${GOARCH}.zip"
+      - name: Test Windows Vertex plugin runtime
+        if: ${{ matrix.goarch == 'amd64' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          plugin_path="${PWD}/dist/vertex-region-models/plugins/windows/amd64/vertex-region-models-vci.dll"
+          plugin_path="$(cygpath -w "$plugin_path")"
+          CLIPROXY_VERTEX_REGION_MODELS_PLUGIN="$plugin_path" \
+            go test ./internal/pluginhost \
+              -run '^(TestDynamicLibraryClientSerializesCalls|TestVertexRegionModelsPluginCABI)$' \
+              -count=1

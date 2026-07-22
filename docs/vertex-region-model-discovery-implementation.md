@@ -5,6 +5,7 @@
 Completed on 2026-07-20.
 Windows plugin distribution revised on 2026-07-22.
 Authoritative model discovery revised on 2026-07-22.
+Windows plugin runtime safety revised on 2026-07-22.
 
 ## Problem
 
@@ -165,6 +166,8 @@ enabled explicitly.
 - [x] Add executable-relative plugin directory resolution with escape checks.
 - [x] Add lifecycle host feature negotiation and make old-host registration inert.
 - [x] Publish versioned Windows x64/ARM64 plugin ZIPs separately from server archives and add matching PR CI builds.
+- [x] Serialize Windows Go C-shared calls, move blocking host callback work off
+  the foreign callback stack, and run concurrent amd64 DLL integration tests.
 - [x] Keep the WinGet nested portable list limited to the server executable.
 - [x] Reconcile configuration, plugin, WinGet, and lifecycle documentation with the implementation.
 - [x] Run formatting, focused tests, plugin build, the full Go test suite, and
@@ -178,6 +181,8 @@ enabled explicitly.
 - `go build -buildmode=c-shared` for the Vertex region model plugin
 - `bash scripts/tests/generate-winget-manifest_test.sh`
 - `bash scripts/tests/windows-plugin-workflow_test.sh`
+- Windows amd64 execution of `TestDynamicLibraryClientSerializesCalls` and
+  `TestVertexRegionModelsPluginCABI` against the packaged DLL
 - YAML parsing for the release, PR build, and example configuration files
 - `go build -o test-output ./cmd/server` followed by removal of `test-output`
 - `gofmt` leaves all changed Go files formatted
@@ -191,6 +196,8 @@ enabled explicitly.
   `fail_open: true`, but that temporarily makes the native catalog authoritative.
 - Documentation-only models have intentionally incomplete capability metadata.
   The plugin does not guess token limits, thinking levels, or modalities.
+- Windows serializes calls into each Go C-shared plugin. This trades per-plugin
+  call concurrency for reliable response-buffer ownership across the native ABI.
 
 ## Final Results
 
@@ -238,10 +245,14 @@ its generated DEF file. Because versioned names such as
 `vertex-region-models-v7.2.92.dll` are not accepted by all MinGW linkers, CI
 links as `vertex_region_models.dll`, removes the generated C header, and then
 renames the DLL to the versioned archive name. Pull requests exercise the same
-amd64 and arm64 cross-build and plugin ZIP layout. Server archives exclude the
-DLL, while Release notes link directly to both plugin assets. A workflow
-regression test locks down the toolchain, compiler mapping, packaging split,
-and rename behavior. Local verification also covered executable-relative path
-resolution, missing-feature behavior for both register and reconfigure, the
-manifest's DLL-alias exclusion, and a native `c-shared` build on the development
-host.
+amd64 and arm64 cross-build and plugin ZIP layout. The amd64 PR and release jobs
+also load the packaged DLL and verify five concurrent model-discovery calls
+through real host callbacks. Windows serializes native calls per plugin and
+dispatches callback work from the foreign callback stack to a regular Go
+goroutine, preventing successful calls from returning empty JSON buffers.
+Server archives exclude the DLL, while Release notes link directly to both
+plugin assets. A workflow regression test locks down the toolchain, compiler
+mapping, packaging split, runtime test, and rename behavior. Local verification
+also covered executable-relative path resolution, missing-feature behavior for
+both register and reconfigure, the manifest's DLL-alias exclusion, and a native
+`c-shared` build on the development host.

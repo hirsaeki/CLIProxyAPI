@@ -47,6 +47,12 @@ renaming it to the versioned archive name. This is required because Go places
 the requested output name in an unquoted generated DEF `LIBRARY` entry, and
 some MinGW linkers reject the versioned name.
 
+The amd64 Windows jobs also load the built DLL and exercise five concurrent
+`model.for_auth` calls through the real host HTTP and logging callbacks. The
+Windows host serializes calls into each Go C-shared plugin and moves callback
+work off the foreign callback stack to prevent empty response envelopes. ARM64
+remains a cross-build check because the hosted runner is x64.
+
 ## Configuration
 
 ```yaml

@@ -233,6 +233,19 @@ jobs:
           else
             tar -C "$archive_dir" -czf "dist/$archive_name" "$binary_name" LICENSE README.md README_CN.md config.example.yaml
           fi
+      - name: Test Windows Vertex plugin runtime
+        if: ${{ matrix.goos == 'windows' && matrix.goarch == 'amd64' }}
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          plugin_path="${PWD}/dist/${TARGET}/vertex-region-models/plugins/windows/amd64/vertex-region-models-v${RELEASE_VERSION}.dll"
+          plugin_path="$(cygpath -w "$plugin_path")"
+          CLIPROXY_VERTEX_REGION_MODELS_PLUGIN="$plugin_path" \
+            go test ./internal/pluginhost \
+              -run '^(TestDynamicLibraryClientSerializesCalls|TestVertexRegionModelsPluginCABI)$' \
+              -count=1
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}

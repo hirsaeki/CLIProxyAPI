@@ -41,6 +41,8 @@ for workflow in "$release_workflow" "$pr_workflow"; do
   assert_contains 'vertex_region_models.dll' "$workflow"
   assert_contains 'mv "$plugin_link_output" "$plugin_output"' "$workflow"
   assert_contains 'plugin_package_dir=' "$workflow"
+  assert_contains 'TestDynamicLibraryClientSerializesCalls' "$workflow"
+  assert_contains 'TestVertexRegionModelsPluginCABI' "$workflow"
 done
 
 if grep -Fq -- 'windows-11-arm' "$release_workflow" "$pr_workflow"; then
