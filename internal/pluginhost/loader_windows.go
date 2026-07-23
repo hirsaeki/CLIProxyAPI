@@ -71,6 +71,8 @@ type dynamicLibraryClient struct {
 	api    windowsPluginAPI
 }
 
+func (*dynamicLibraryClient) requiresSynchronousCall() {}
+
 func defaultPluginLoader() pluginLoader {
 	return dynamicLibraryLoader{}
 }

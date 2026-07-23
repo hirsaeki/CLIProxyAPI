@@ -15,6 +15,11 @@ type guardedPluginClient struct {
 	shutdownDone chan struct{}
 }
 
+// synchronousPluginClient marks native clients whose ABI call must remain on the caller's goroutine.
+type synchronousPluginClient interface {
+	requiresSynchronousCall()
+}
+
 func newGuardedPluginClient(inner pluginClient) *guardedPluginClient {
 	client := &guardedPluginClient{inner: inner, shutdownDone: make(chan struct{})}
 	client.cond = sync.NewCond(&client.mu)
@@ -28,6 +33,10 @@ func (c *guardedPluginClient) Call(ctx context.Context, method string, request [
 	}
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if _, synchronous := inner.(synchronousPluginClient); synchronous {
+		defer c.release()
+		return inner.Call(ctx, method, request)
 	}
 	result := make(chan guardedPluginCallResult, 1)
 	go func() {
