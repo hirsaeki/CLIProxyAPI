@@ -44,13 +44,15 @@ jobs:
           - `CLIProxyAPI_<version>_linux_<arch>.tar.gz` is the default Linux build. It supports dynamic library plugins and is built against a GLIBC 2.17 baseline.
           - `CLIProxyAPI_<version>_linux_<arch>_no-plugin.tar.gz` is the portable Linux build for musl-based or older systems such as OpenWrt. It does not support dynamic library plugins.
 
+          Every main CLIProxyAPI archive includes the `sync-oauth-model-availability` helper and its quick-start documentation. Windows archives use `sync-oauth-model-availability.exe`.
+
           ## FreeBSD release assets
 
           - `CLIProxyAPI_<version>_freebsd_aarch64_no-plugin.tar.gz` is the FreeBSD arm64 build. It is built without CGO and does not support dynamic library plugins.
 
           ## Windows release assets
 
-          - `CLIProxyAPI_<version>_windows_<arch>.zip` contains the server and documentation only.
+          - `CLIProxyAPI_<version>_windows_<arch>.zip` contains the server, OAuth model availability sync helper, and documentation.
           - [Vertex region models plugin for Windows x64](https://github.com/__REPOSITORY__/releases/download/__TAG__/vertex-region-models___VERSION___windows_amd64.zip)
           - [Vertex region models plugin for Windows ARM64](https://github.com/__REPOSITORY__/releases/download/__TAG__/vertex-region-models___VERSION___windows_aarch64.zip)
 
@@ -193,8 +195,10 @@ jobs:
         run: |
           set -euo pipefail
           binary_name="cli-proxy-api"
+          helper_name="sync-oauth-model-availability"
           if [[ "$GOOS" == "windows" ]]; then
             binary_name="cli-proxy-api.exe"
+            helper_name="sync-oauth-model-availability.exe"
             export CC="$WINDOWS_CC"
           fi
 
@@ -206,6 +210,9 @@ jobs:
           CGO_ENABLED=1 GOOS="$GOOS" GOARCH="$GOARCH" go build \
             -ldflags="-s -w -X main.Version=${RELEASE_VERSION} -X main.Commit=${COMMIT} -X main.BuildDate=${BUILD_DATE}" \
             -o "$archive_dir/$binary_name" ./cmd/server/
+          CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -buildvcs=false \
+            -ldflags="-s -w" \
+            -o "$archive_dir/$helper_name" ./cmd/sync_oauth_model_availability/
 
           if [[ "$GOOS" == "windows" ]]; then
             plugin_package_dir="dist/${TARGET}/vertex-region-models"
@@ -227,11 +234,13 @@ jobs:
             test -f "dist/$plugin_archive_name"
           fi
 
+          mkdir -p "$archive_dir/docs"
           cp LICENSE README.md README_CN.md config.example.yaml "$archive_dir/"
+          cp docs/oauth-model-availability.md "$archive_dir/docs/"
           if [[ "$ARCHIVE_FORMAT" == "zip" ]]; then
             powershell -NoProfile -Command "Compress-Archive -Path '${archive_dir}/*' -DestinationPath 'dist/${archive_name}' -Force"
           else
-            tar -C "$archive_dir" -czf "dist/$archive_name" "$binary_name" LICENSE README.md README_CN.md config.example.yaml
+            tar -C "$archive_dir" -czf "dist/$archive_name" "$binary_name" "$helper_name" LICENSE README.md README_CN.md config.example.yaml docs/oauth-model-availability.md
           fi
       - name: Test Windows Vertex plugin runtime
         if: ${{ matrix.goos == 'windows' && matrix.goarch == 'amd64' }}
@@ -371,6 +380,9 @@ jobs:
               CGO_ENABLED=1 GOOS=linux GOARCH="${GOARCH}" go build -buildvcs=false \
                 -ldflags="-s -w -X main.Version=${RELEASE_VERSION} -X main.Commit=${COMMIT} -X main.BuildDate=${BUILD_DATE}" \
                 -o "'"$archive_dir"'/cli-proxy-api" ./cmd/server/
+              CGO_ENABLED=0 GOOS=linux GOARCH="${GOARCH}" go build -buildvcs=false \
+                -ldflags="-s -w" \
+                -o "'"$archive_dir"'/sync-oauth-model-availability" ./cmd/sync_oauth_model_availability/
 
               glibc_versions="$(readelf --version-info "'"$archive_dir"'/cli-proxy-api" | sed -n "s/.*Name: GLIBC_\([0-9.]*\).*/\1/p" | sort -Vu)"
               if [[ -n "${glibc_versions}" ]]; then
@@ -383,8 +395,10 @@ jobs:
               fi
             '
 
+          mkdir -p "$archive_dir/docs"
           cp LICENSE README.md README_CN.md config.example.yaml "$archive_dir/"
-          tar -C "$archive_dir" -czf "dist/$archive_name" cli-proxy-api LICENSE README.md README_CN.md config.example.yaml
+          cp docs/oauth-model-availability.md "$archive_dir/docs/"
+          tar -C "$archive_dir" -czf "dist/$archive_name" cli-proxy-api sync-oauth-model-availability LICENSE README.md README_CN.md config.example.yaml docs/oauth-model-availability.md
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
@@ -495,6 +509,9 @@ jobs:
           CGO_ENABLED=0 GOOS=linux GOARCH="$GOARCH" go build -buildvcs=false \
             -ldflags="-s -w -X main.Version=${RELEASE_VERSION} -X main.Commit=${COMMIT} -X main.BuildDate=${BUILD_DATE}" \
             -o "$archive_dir/cli-proxy-api" ./cmd/server/
+          CGO_ENABLED=0 GOOS=linux GOARCH="$GOARCH" go build -buildvcs=false \
+            -ldflags="-s -w" \
+            -o "$archive_dir/sync-oauth-model-availability" ./cmd/sync_oauth_model_availability/
 
           if readelf -l "$archive_dir/cli-proxy-api" | grep -q 'Requesting program interpreter'; then
             readelf -l "$archive_dir/cli-proxy-api" >&2
@@ -502,8 +519,10 @@ jobs:
             exit 1
           fi
 
+          mkdir -p "$archive_dir/docs"
           cp LICENSE README.md README_CN.md config.example.yaml "$archive_dir/"
-          tar -C "$archive_dir" -czf "dist/$archive_name" cli-proxy-api LICENSE README.md README_CN.md config.example.yaml
+          cp docs/oauth-model-availability.md "$archive_dir/docs/"
+          tar -C "$archive_dir" -czf "dist/$archive_name" cli-proxy-api sync-oauth-model-availability LICENSE README.md README_CN.md config.example.yaml docs/oauth-model-availability.md
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
@@ -656,8 +675,13 @@ jobs:
 
           echo "Packaging ${archive_name}"
           cp "dist/${TARGET}/bin/cli-proxy-api" "$archive_dir/cli-proxy-api"
+          CGO_ENABLED=0 GOOS=freebsd GOARCH="$TARGET_GOARCH" go build -buildvcs=false \
+            -ldflags="-s -w" \
+            -o "$archive_dir/sync-oauth-model-availability" ./cmd/sync_oauth_model_availability/
+          mkdir -p "$archive_dir/docs"
           cp LICENSE README.md README_CN.md config.example.yaml "$archive_dir/"
-          tar -C "$archive_dir" -czf "dist/$archive_name" cli-proxy-api LICENSE README.md README_CN.md config.example.yaml
+          cp docs/oauth-model-availability.md "$archive_dir/docs/"
+          tar -C "$archive_dir" -czf "dist/$archive_name" cli-proxy-api sync-oauth-model-availability LICENSE README.md README_CN.md config.example.yaml docs/oauth-model-availability.md
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}

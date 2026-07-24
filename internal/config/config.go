@@ -174,6 +174,9 @@ type Config struct {
 	// gemini-api-key, interactions-api-key, codex-api-key, xai-api-key, claude-api-key, openai-compatibility, and vertex-api-key.
 	OAuthModelAlias map[string][]OAuthModelAlias `yaml:"oauth-model-alias,omitempty" json:"oauth-model-alias,omitempty"`
 
+	// OAuthModelAvailabilityFile points to a startup-only per-credential model availability sidecar.
+	OAuthModelAvailabilityFile string `yaml:"oauth-model-availability-file,omitempty" json:"oauth-model-availability-file,omitempty"`
+
 	// Payload defines default and override rules for provider payload parameters.
 	Payload PayloadConfig `yaml:"payload" json:"payload"`
 }

@@ -25,10 +25,14 @@ jobs:
         run: bash .github/scripts/refresh-model-catalogs.sh
       - name: Validate Windows plugin workflows
         run: bash scripts/tests/windows-plugin-workflow_test.sh
+      - name: Validate OAuth model availability release packaging
+        run: bash scripts/tests/oauth-model-availability-release_test.sh
       - name: Build
         run: |
           go build -o test-output ./cmd/server
+          go build -o sync-oauth-model-availability ./cmd/sync_oauth_model_availability
           rm -f test-output
+          rm -f sync-oauth-model-availability
 
   windows-plugin:
     name: build Windows plugin (${{ matrix.goarch }})

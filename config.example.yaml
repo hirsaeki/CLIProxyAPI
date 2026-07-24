@@ -442,6 +442,11 @@ nonstream-keepalive-interval: 0
 #       - "imagen-3.0-generate-002"
 #       - "imagen-*"
 
+# Optional startup-only per-credential Claude/xAI OAuth model availability sidecar.
+# Relative paths are resolved from this config file's directory. A configured missing or invalid
+# file prevents startup; hot reload does not reread it. See docs/oauth-model-availability.md.
+# oauth-model-availability-file: "./oauth-model-availability.json"
+
 # Global OAuth model name aliases (per channel)
 # These aliases rename model IDs for both model listing and request routing.
 # Supported channels: vertex, aistudio, antigravity, claude, codex, kimi, xai.

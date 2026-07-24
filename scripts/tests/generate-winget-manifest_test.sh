@@ -46,10 +46,12 @@ assert_contains '  InstallerUrl: https://github.com/hirsaeki/CLIProxyAPI/release
 assert_contains '  InstallerSha256: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"' "$installer_manifest"
 assert_contains '  InstallerUrl: https://github.com/hirsaeki/CLIProxyAPI/releases/download/v7.2.60/CLIProxyAPI_7.2.60_windows_aarch64.zip' "$installer_manifest"
 assert_contains '  InstallerSha256: "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"' "$installer_manifest"
+assert_contains '  - RelativeFilePath: sync-oauth-model-availability.exe' "$installer_manifest"
+assert_contains '    PortableCommandAlias: sync-oauth-model-availability' "$installer_manifest"
 
 relative_file_count="$(grep -Fc -- '  - RelativeFilePath:' "$installer_manifest")"
-if [[ "$relative_file_count" -ne 2 ]]; then
-  printf 'expected only two executable entries, found %s\n' "$relative_file_count" >&2
+if [[ "$relative_file_count" -ne 4 ]]; then
+  printf 'expected four executable entries, found %s\n' "$relative_file_count" >&2
   exit 1
 fi
 if grep -Fq -- '.dll' "$installer_manifest"; then

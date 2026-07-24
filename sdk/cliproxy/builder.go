@@ -15,6 +15,7 @@ import (
 	sdkAuth "github.com/router-for-me/CLIProxyAPI/v7/sdk/auth"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
+	log "github.com/sirupsen/logrus"
 )
 
 // Builder constructs a Service instance with customizable providers.
@@ -189,6 +190,11 @@ func (b *Builder) Build() (*Service, error) {
 	if errResolvePluginsDir := b.cfg.ResolvePluginsDir(); errResolvePluginsDir != nil && b.cfg.Plugins.Enabled {
 		return nil, fmt.Errorf("cliproxy: %w", errResolvePluginsDir)
 	}
+	oauthModelAvailability, oauthModelAvailabilityPath, errAvailability := loadOAuthModelAvailability(b.cfg.OAuthModelAvailabilityFile, b.configPath)
+	if errAvailability != nil {
+		log.WithError(errAvailability).Error("invalid configured OAuth model availability sidecar")
+		return nil, fmt.Errorf("cliproxy: %w", errAvailability)
+	}
 
 	tokenProvider := b.tokenProvider
 	if tokenProvider == nil {
@@ -247,18 +253,20 @@ func (b *Builder) Build() (*Service, error) {
 	}
 
 	service := &Service{
-		cfg:                 b.cfg,
-		configPath:          b.configPath,
-		tokenProvider:       tokenProvider,
-		apiKeyProvider:      apiKeyProvider,
-		watcherFactory:      watcherFactory,
-		hooks:               b.hooks,
-		authManager:         authManager,
-		accessManager:       accessManager,
-		coreManager:         coreManager,
-		pluginHost:          pluginHost,
-		appliedRoutingState: appliedRoutingState,
-		serverOptions:       append([]api.ServerOption(nil), b.serverOptions...),
+		cfg:                        b.cfg,
+		configPath:                 b.configPath,
+		oauthModelAvailability:     oauthModelAvailability,
+		oauthModelAvailabilityPath: oauthModelAvailabilityPath,
+		tokenProvider:              tokenProvider,
+		apiKeyProvider:             apiKeyProvider,
+		watcherFactory:             watcherFactory,
+		hooks:                      b.hooks,
+		authManager:                authManager,
+		accessManager:              accessManager,
+		coreManager:                coreManager,
+		pluginHost:                 pluginHost,
+		appliedRoutingState:        appliedRoutingState,
+		serverOptions:              append([]api.ServerOption(nil), b.serverOptions...),
 	}
 	if b.postAuthHook != nil {
 		service.serverOptions = append(service.serverOptions, api.WithPostAuthHook(b.postAuthHook))

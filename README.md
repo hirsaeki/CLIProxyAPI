@@ -127,6 +127,9 @@ CLIProxyAPI Guides: [https://help.router-for.me/](https://help.router-for.me/)
 Windows installation with the repository-local WinGet manifest:
 [docs/winget.md](docs/winget.md)
 
+Optional per-credential Claude/xAI OAuth model availability quick start:
+[docs/oauth-model-availability.md#quick-start](docs/oauth-model-availability.md#quick-start)
+
 ## Management API
 
 see [MANAGEMENT_API.md](https://help.router-for.me/management/api)

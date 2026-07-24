@@ -60,6 +60,10 @@ type Service struct {
 	// configPath is the path to the configuration file.
 	configPath string
 
+	// oauthModelAvailability is the immutable startup snapshot of the configured sidecar.
+	oauthModelAvailability     *oauthModelAvailabilitySnapshot
+	oauthModelAvailabilityPath string
+
 	// tokenProvider handles loading token-based clients.
 	tokenProvider TokenClientProvider
 
@@ -1406,7 +1410,8 @@ func (s *Service) tryRegisterPluginModelsForAuth(ctx context.Context, a *coreaut
 	if ctx != nil && ctx.Err() != nil {
 		return true
 	}
-	models := applyExcludedModels(result.Models, activeExcluded)
+	models := s.applyOAuthModelAvailability(providerKey, activeAuth.ID, activeAuthKind, result.Models)
+	models = applyExcludedModels(models, activeExcluded)
 	models = applyOAuthModelAliasForAuth(s.cfg, providerKey, activeAuthKind, activeAuth.Attributes, models)
 	if len(models) > 0 {
 		s.registerResolvedModelsForAuth(activeAuth, providerKey, applyModelPrefixes(models, activeAuth.Prefix, s.cfg != nil && s.cfg.ForceModelPrefix))
@@ -1518,8 +1523,18 @@ func (s *Service) commitConfigUpdate(newCfg *config.Config) configCommit {
 	}
 
 	s.cfgMu.Lock()
+	oldAvailabilityPath := ""
+	if s.cfg != nil {
+		oldAvailabilityPath = strings.TrimSpace(s.cfg.OAuthModelAvailabilityFile)
+	}
 	s.cfg = newCfg
 	s.cfgMu.Unlock()
+	if newAvailabilityPath := strings.TrimSpace(newCfg.OAuthModelAvailabilityFile); newAvailabilityPath != oldAvailabilityPath {
+		log.WithFields(log.Fields{
+			"configured_path": newAvailabilityPath,
+			"loaded_path":     s.oauthModelAvailabilityPath,
+		}).Warn("OAuth model availability path changed; restart required to load the new sidecar")
+	}
 	s.configSequence++
 	return configCommit{cfg: newCfg, sequence: s.configSequence}
 }
@@ -2787,6 +2802,7 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 				excluded = entry.ExcludedModels
 			}
 		}
+		models = s.applyOAuthModelAvailability(provider, a.ID, authKind, models)
 		models = applyExcludedModels(models, excluded)
 	case "codex":
 		codexPlanType := ""
@@ -2827,6 +2843,7 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 				excluded = entry.ExcludedModels
 			}
 		}
+		models = s.applyOAuthModelAvailability(provider, a.ID, authKind, models)
 		models = applyExcludedModels(models, excluded)
 	default:
 		// Handle OpenAI-compatibility providers by name using config
@@ -2942,7 +2959,9 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 	if key == "" {
 		key = strings.ToLower(strings.TrimSpace(a.Provider))
 	}
-	models = s.appendPluginModels(key, models)
+	if !s.hasAuthoritativeOAuthModelAvailability(provider, a.ID, authKind) {
+		models = s.appendPluginModels(key, models)
+	}
 	if len(models) > 0 {
 		s.registerResolvedModelsForAuth(a, key, applyModelPrefixes(models, a.Prefix, s.cfg != nil && s.cfg.ForceModelPrefix))
 		return
