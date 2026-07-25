@@ -10,123 +10,72 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"syscall"
 	"testing"
-	"time"
+	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
 
-type windowsCallSerializationState struct {
-	mu         sync.Mutex
-	active     int
-	maxActive  int
-	workers    int
-	first      chan struct{}
-	concurrent chan struct{}
-	release    chan struct{}
-	firstOnce  sync.Once
-	allOnce    sync.Once
+var testReentrantHostCallback uintptr
+
+func TestDynamicLibraryClientCallSurvivesReentrantCallbackStackGrowth(t *testing.T) {
+	testReentrantHostCallback = syscall.NewCallback(testGrowHostCallbackStack)
+	client := newGuardedPluginClient(&dynamicLibraryClient{api: windowsPluginAPI{
+		call:       syscall.NewCallback(testReentrantPluginCall),
+		freeBuffer: syscall.NewCallback(testReentrantPluginFree),
+	}})
+	t.Cleanup(client.Shutdown)
+
+	got, errCall := client.Call(context.Background(), "model.route", []byte(`{}`))
+	if errCall != nil {
+		t.Fatalf("Call() error = %v", errCall)
+	}
+	want := `{"ok":true,"result":{"Handled":true}}`
+	if string(got) != want {
+		t.Fatalf("Call() response = %q, want %q", got, want)
+	}
 }
 
-var (
-	windowsCallSerializationStateMu sync.Mutex
-	windowsCallSerializationCurrent *windowsCallSerializationState
-)
-
-func windowsCallSerializationPluginCall(_ uintptr, _ uintptr, _ uintptr, _ uintptr) uintptr {
-	windowsCallSerializationStateMu.Lock()
-	state := windowsCallSerializationCurrent
-	windowsCallSerializationStateMu.Unlock()
-	if state == nil {
+func testReentrantPluginCall(_, _, _, responsePtr uintptr) uintptr {
+	if testReentrantHostCallback == 0 || responsePtr == 0 {
 		return 1
 	}
+	_, _, _ = syscall.SyscallN(testReentrantHostCallback)
 
-	state.mu.Lock()
-	state.active++
-	if state.active > state.maxActive {
-		state.maxActive = state.active
+	raw := []byte(`{"ok":true,"result":{"Handled":true}}`)
+	mem, errAlloc := windows.LocalAlloc(windows.LMEM_FIXED, uint32(len(raw)))
+	if errAlloc != nil || mem == 0 {
+		return 1
 	}
-	state.firstOnce.Do(func() { close(state.first) })
-	if state.active == state.workers {
-		state.allOnce.Do(func() { close(state.concurrent) })
-	}
-	state.mu.Unlock()
-
-	<-state.release
-
-	state.mu.Lock()
-	state.active--
-	state.mu.Unlock()
+	copy(unsafe.Slice((*byte)(unsafe.Pointer(mem)), len(raw)), raw)
+	response := (*windowsBuffer)(unsafe.Pointer(responsePtr))
+	response.ptr = mem
+	response.len = uintptr(len(raw))
 	return 0
 }
 
-func TestDynamicLibraryClientSerializesCalls(t *testing.T) {
-	const workers = 5
-	state := &windowsCallSerializationState{
-		workers:    workers,
-		first:      make(chan struct{}),
-		concurrent: make(chan struct{}),
-		release:    make(chan struct{}),
+func testReentrantPluginFree(ptr, _ uintptr) uintptr {
+	if ptr != 0 {
+		_, _ = windows.LocalFree(windows.Handle(ptr))
 	}
-	windowsCallSerializationStateMu.Lock()
-	if windowsCallSerializationCurrent != nil {
-		windowsCallSerializationStateMu.Unlock()
-		t.Fatal("windows call serialization test state is already active")
-	}
-	windowsCallSerializationCurrent = state
-	windowsCallSerializationStateMu.Unlock()
-	t.Cleanup(func() {
-		windowsCallSerializationStateMu.Lock()
-		windowsCallSerializationCurrent = nil
-		windowsCallSerializationStateMu.Unlock()
-	})
+	return 0
+}
 
-	client := &dynamicLibraryClient{api: windowsPluginAPI{
-		call: syscall.NewCallback(windowsCallSerializationPluginCall),
-	}}
-	t.Cleanup(client.Shutdown)
-	start := make(chan struct{})
-	errCh := make(chan error, workers)
-	var wg sync.WaitGroup
-	for range workers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			<-start
-			_, errCall := client.Call(context.Background(), "model.for_auth", nil)
-			errCh <- errCall
-		}()
-	}
-	close(start)
+func testGrowHostCallbackStack() uintptr {
+	return uintptr(testGrowStack(64))
+}
 
-	select {
-	case <-state.first:
-	case <-time.After(5 * time.Second):
-		close(state.release)
-		t.Fatal("first plugin call did not start")
+//go:noinline
+func testGrowStack(depth int) int {
+	var padding [1024]byte
+	for index := range padding {
+		padding[index] = byte(index + depth)
 	}
-
-	concurrent := false
-	select {
-	case <-state.concurrent:
-		concurrent = true
-	case <-time.After(250 * time.Millisecond):
+	if depth == 0 {
+		return int(padding[0])
 	}
-	close(state.release)
-	wg.Wait()
-	close(errCh)
-	for errCall := range errCh {
-		if errCall != nil {
-			t.Fatalf("Call() error = %v", errCall)
-		}
-	}
-
-	state.mu.Lock()
-	maxActive := state.maxActive
-	state.mu.Unlock()
-	if concurrent || maxActive != 1 {
-		t.Fatalf("concurrent native plugin calls = %v, max active = %d, want serialized calls", concurrent, maxActive)
-	}
+	return testGrowStack(depth-1) + int(padding[depth%len(padding)])
 }
 
 func TestShadowPluginDirIsProcessScoped(t *testing.T) {

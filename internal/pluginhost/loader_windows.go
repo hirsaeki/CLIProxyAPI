@@ -39,11 +39,6 @@ type windowsPluginAPI struct {
 	shutdown   uintptr
 }
 
-type windowsHostCallResult struct {
-	payload []byte
-	err     error
-}
-
 var (
 	windowsHostCallbackID      atomic.Uintptr
 	windowsHostCallbackEntries sync.Map
@@ -66,15 +61,11 @@ type dynamicLibraryClient struct {
 	tempPath string
 	hostAPI  *windowsHostAPI
 	hostCtx  *uintptr
-	// Windows Go c-shared DLL calls can lose response buffers when invoked concurrently.
-	callMu sync.Mutex
-	api    windowsPluginAPI
+	api      windowsPluginAPI
 }
 
-func (*dynamicLibraryClient) requiresSynchronousCall() {}
-
 func defaultPluginLoader() pluginLoader {
-	return dynamicLibraryLoader{}
+	return synchronousWindowsPluginLoader{inner: dynamicLibraryLoader{}}
 }
 
 func (dynamicLibraryLoader) Open(file pluginFile, host *Host) (pluginClient, error) {
@@ -260,12 +251,7 @@ func shadowPluginMatches(path string, size int64, digest string) bool {
 }
 
 func (c *dynamicLibraryClient) Call(ctx context.Context, method string, request []byte) ([]byte, error) {
-	if c == nil {
-		return nil, fmt.Errorf("plugin client is closed")
-	}
-	c.callMu.Lock()
-	defer c.callMu.Unlock()
-	if c.api.call == 0 {
+	if c == nil || c.api.call == 0 {
 		return nil, fmt.Errorf("plugin client is closed")
 	}
 	if ctx != nil {
@@ -283,13 +269,26 @@ func (c *dynamicLibraryClient) Call(ctx context.Context, method string, request 
 	if len(request) > 0 {
 		requestPtr = uintptr(unsafe.Pointer(&request[0]))
 	}
-	var response windowsBuffer
+	responseMem, errAlloc := windows.LocalAlloc(
+		windows.LMEM_FIXED|windows.LMEM_ZEROINIT,
+		uint32(unsafe.Sizeof(windowsBuffer{})),
+	)
+	if errAlloc != nil {
+		return nil, fmt.Errorf("allocate plugin response buffer: %w", errAlloc)
+	}
+	if responseMem == 0 {
+		return nil, fmt.Errorf("allocate plugin response buffer")
+	}
+	defer func() {
+		_, _ = windows.LocalFree(windows.Handle(responseMem))
+	}()
+	response := (*windowsBuffer)(unsafe.Pointer(responseMem))
 	rc, _, _ := syscall.SyscallN(
 		c.api.call,
 		uintptr(unsafe.Pointer(methodBytes)),
 		requestPtr,
 		uintptr(len(request)),
-		uintptr(unsafe.Pointer(&response)),
+		responseMem,
 	)
 	var out []byte
 	if response.ptr != 0 && response.len > 0 {
@@ -365,16 +364,7 @@ func windowsHostCall(hostCtx uintptr, methodPtr uintptr, requestPtr uintptr, req
 		request = append([]byte(nil), request...)
 	}
 	ctx := withHostCallbackPluginID(context.Background(), entry.pluginID)
-	method := windowsString(methodPtr)
-	// Keep blocking host work off the foreign-thread callback stack. Running HTTP or
-	// logging work inline can cause the enclosing Go c-shared DLL call to lose its response.
-	resultCh := make(chan windowsHostCallResult, 1)
-	go func() {
-		resultCh <- callHostFromWindowsCallback(entry, ctx, method, request)
-	}()
-	result := <-resultCh
-	resp := result.payload
-	errCall := result.err
+	resp, errCall := callHostFromWindowsCallback(entry, ctx, windowsString(methodPtr), request)
 	if errCall != nil {
 		resp = marshalRPCError("host_call_failed", errCall.Error())
 	}
@@ -390,16 +380,6 @@ func windowsHostCall(hostCtx uintptr, methodPtr uintptr, requestPtr uintptr, req
 	response.ptr = mem
 	response.len = uintptr(len(resp))
 	return 0
-}
-
-func callHostFromWindowsCallback(entry dynamicHostCallbackEntry, ctx context.Context, method string, request []byte) (result windowsHostCallResult) {
-	defer func() {
-		if recovered := recover(); recovered != nil {
-			result = windowsHostCallResult{err: fmt.Errorf("host callback panic: %v", recovered)}
-		}
-	}()
-	result.payload, result.err = entry.host.callFromPlugin(ctx, method, request)
-	return result
 }
 
 func windowsHostFree(ptr uintptr, len uintptr) uintptr {
