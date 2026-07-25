@@ -56,7 +56,7 @@ assert_contains 'bash scripts/tests/windows-plugin-workflow_test.sh' "$pr_workfl
 
 assert_contains 'plugin_archive_name="vertex-region-models_${RELEASE_VERSION}_windows_${ASSET_ARCH}.zip"' "$release_workflow"
 assert_contains 'dist/vertex-region-models_*' "$release_workflow"
-assert_count 2 'archives=(CLIProxyAPI_*.tar.gz CLIProxyAPI_*.zip vertex-region-models_*.zip)' "$release_workflow"
+assert_count 2 'archives=(CLIProxyAPI_*.tar.gz CLIProxyAPI_*.zip oauth-model-availability-helper_*.tar.gz oauth-model-availability-helper_*.zip vertex-region-models_*.zip)' "$release_workflow"
 assert_contains 'vertex-region-models___VERSION___windows_amd64.zip' "$release_workflow"
 assert_contains 'vertex-region-models___VERSION___windows_aarch64.zip' "$release_workflow"
 if grep -Fq -- 'plugin_dir="$archive_dir/plugins/' "$release_workflow"; then

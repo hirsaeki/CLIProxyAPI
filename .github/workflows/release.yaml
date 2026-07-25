@@ -44,7 +44,7 @@ jobs:
           - `CLIProxyAPI_<version>_linux_<arch>.tar.gz` is the default Linux build. It supports dynamic library plugins and is built against a GLIBC 2.17 baseline.
           - `CLIProxyAPI_<version>_linux_<arch>_no-plugin.tar.gz` is the portable Linux build for musl-based or older systems such as OpenWrt. It does not support dynamic library plugins.
 
-          Every main CLIProxyAPI archive includes the `sync-oauth-model-availability` helper and its quick-start documentation. Windows archives use `sync-oauth-model-availability.exe`.
+          The optional OAuth model availability helper is distributed separately as `oauth-model-availability-helper_<version>_<os>_<arch>.<format>`. It is intentionally excluded from the main CLIProxyAPI archives and WinGet package.
 
           ## FreeBSD release assets
 
@@ -52,7 +52,7 @@ jobs:
 
           ## Windows release assets
 
-          - `CLIProxyAPI_<version>_windows_<arch>.zip` contains the server, OAuth model availability sync helper, and documentation.
+          - `CLIProxyAPI_<version>_windows_<arch>.zip` contains the server and documentation only.
           - [Vertex region models plugin for Windows x64](https://github.com/__REPOSITORY__/releases/download/__TAG__/vertex-region-models___VERSION___windows_amd64.zip)
           - [Vertex region models plugin for Windows ARM64](https://github.com/__REPOSITORY__/releases/download/__TAG__/vertex-region-models___VERSION___windows_aarch64.zip)
 
@@ -204,15 +204,17 @@ jobs:
 
           archive_dir="dist/${TARGET}/archive"
           archive_name="CLIProxyAPI_${RELEASE_VERSION}_${GOOS}_${ASSET_ARCH}.${ARCHIVE_FORMAT}"
+          helper_archive_dir="dist/${TARGET}/oauth-model-availability-helper"
+          helper_archive_name="oauth-model-availability-helper_${RELEASE_VERSION}_${GOOS}_${ASSET_ARCH}.${ARCHIVE_FORMAT}"
           rm -rf "dist/${TARGET}"
-          mkdir -p "$archive_dir"
+          mkdir -p "$archive_dir" "$helper_archive_dir"
 
           CGO_ENABLED=1 GOOS="$GOOS" GOARCH="$GOARCH" go build \
             -ldflags="-s -w -X main.Version=${RELEASE_VERSION} -X main.Commit=${COMMIT} -X main.BuildDate=${BUILD_DATE}" \
             -o "$archive_dir/$binary_name" ./cmd/server/
           CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -buildvcs=false \
             -ldflags="-s -w" \
-            -o "$archive_dir/$helper_name" ./cmd/sync_oauth_model_availability/
+            -o "$helper_archive_dir/$helper_name" ./cmd/sync_oauth_model_availability/
 
           if [[ "$GOOS" == "windows" ]]; then
             plugin_package_dir="dist/${TARGET}/vertex-region-models"
@@ -239,8 +241,12 @@ jobs:
           cp docs/oauth-model-availability.md "$archive_dir/docs/"
           if [[ "$ARCHIVE_FORMAT" == "zip" ]]; then
             powershell -NoProfile -Command "Compress-Archive -Path '${archive_dir}/*' -DestinationPath 'dist/${archive_name}' -Force"
+            cp LICENSE docs/oauth-model-availability.md "$helper_archive_dir/"
+            powershell -NoProfile -Command "Compress-Archive -Path '${helper_archive_dir}/*' -DestinationPath 'dist/${helper_archive_name}' -Force"
           else
-            tar -C "$archive_dir" -czf "dist/$archive_name" "$binary_name" "$helper_name" LICENSE README.md README_CN.md config.example.yaml docs/oauth-model-availability.md
+            tar -C "$archive_dir" -czf "dist/$archive_name" "$binary_name" LICENSE README.md README_CN.md config.example.yaml docs/oauth-model-availability.md
+            cp LICENSE docs/oauth-model-availability.md "$helper_archive_dir/"
+            tar -C "$helper_archive_dir" -czf "dist/$helper_archive_name" "$helper_name" LICENSE oauth-model-availability.md
           fi
       - name: Test Windows Vertex plugin runtime
         if: ${{ matrix.goos == 'windows' && matrix.goarch == 'amd64' }}
@@ -260,6 +266,7 @@ jobs:
           name: ${{ matrix.target }}
           path: |
             dist/CLIProxyAPI_*
+            dist/oauth-model-availability-helper_*
             dist/vertex-region-models_*
           if-no-files-found: error
       - name: Upload release assets
@@ -269,7 +276,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          assets=(dist/CLIProxyAPI_*.tar.gz dist/CLIProxyAPI_*.zip dist/vertex-region-models_*.zip)
+          assets=(dist/CLIProxyAPI_*.tar.gz dist/CLIProxyAPI_*.zip dist/oauth-model-availability-helper_*.tar.gz dist/oauth-model-availability-helper_*.zip dist/vertex-region-models_*.zip)
           if [[ ${#assets[@]} -eq 0 ]]; then
             printf 'expected archive assets, found %s\n' "${#assets[@]}" >&2
             printf '%s\n' "${assets[@]}" >&2
@@ -288,13 +295,15 @@ jobs:
           gh release download "$GITHUB_REF_NAME" \
             --pattern 'CLIProxyAPI_*.tar.gz' \
             --pattern 'CLIProxyAPI_*.zip' \
+            --pattern 'oauth-model-availability-helper_*.tar.gz' \
+            --pattern 'oauth-model-availability-helper_*.zip' \
             --pattern 'vertex-region-models_*.zip' \
             --dir "$tmp_dir" \
             --clobber
           (
             cd "$tmp_dir"
             shopt -s nullglob
-            archives=(CLIProxyAPI_*.tar.gz CLIProxyAPI_*.zip vertex-region-models_*.zip)
+            archives=(CLIProxyAPI_*.tar.gz CLIProxyAPI_*.zip oauth-model-availability-helper_*.tar.gz oauth-model-availability-helper_*.zip vertex-region-models_*.zip)
             if [[ ${#archives[@]} -eq 0 ]]; then
               echo "No release archives found"
               exit 0
@@ -380,10 +389,6 @@ jobs:
               CGO_ENABLED=1 GOOS=linux GOARCH="${GOARCH}" go build -buildvcs=false \
                 -ldflags="-s -w -X main.Version=${RELEASE_VERSION} -X main.Commit=${COMMIT} -X main.BuildDate=${BUILD_DATE}" \
                 -o "'"$archive_dir"'/cli-proxy-api" ./cmd/server/
-              CGO_ENABLED=0 GOOS=linux GOARCH="${GOARCH}" go build -buildvcs=false \
-                -ldflags="-s -w" \
-                -o "'"$archive_dir"'/sync-oauth-model-availability" ./cmd/sync_oauth_model_availability/
-
               glibc_versions="$(readelf --version-info "'"$archive_dir"'/cli-proxy-api" | sed -n "s/.*Name: GLIBC_\([0-9.]*\).*/\1/p" | sort -Vu)"
               if [[ -n "${glibc_versions}" ]]; then
                 printf "GLIBC versions:\n%s\n" "${glibc_versions}"
@@ -398,7 +403,7 @@ jobs:
           mkdir -p "$archive_dir/docs"
           cp LICENSE README.md README_CN.md config.example.yaml "$archive_dir/"
           cp docs/oauth-model-availability.md "$archive_dir/docs/"
-          tar -C "$archive_dir" -czf "dist/$archive_name" cli-proxy-api sync-oauth-model-availability LICENSE README.md README_CN.md config.example.yaml docs/oauth-model-availability.md
+          tar -C "$archive_dir" -czf "dist/$archive_name" cli-proxy-api LICENSE README.md README_CN.md config.example.yaml docs/oauth-model-availability.md
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
@@ -503,15 +508,17 @@ jobs:
 
           archive_dir="dist/${TARGET}/archive"
           archive_name="CLIProxyAPI_${RELEASE_VERSION}_linux_${ASSET_ARCH}_no-plugin.tar.gz"
+          helper_archive_dir="dist/${TARGET}/oauth-model-availability-helper"
+          helper_archive_name="oauth-model-availability-helper_${RELEASE_VERSION}_linux_${ASSET_ARCH}.tar.gz"
           rm -rf "dist/${TARGET}"
-          mkdir -p "$archive_dir"
+          mkdir -p "$archive_dir" "$helper_archive_dir"
 
           CGO_ENABLED=0 GOOS=linux GOARCH="$GOARCH" go build -buildvcs=false \
             -ldflags="-s -w -X main.Version=${RELEASE_VERSION} -X main.Commit=${COMMIT} -X main.BuildDate=${BUILD_DATE}" \
             -o "$archive_dir/cli-proxy-api" ./cmd/server/
           CGO_ENABLED=0 GOOS=linux GOARCH="$GOARCH" go build -buildvcs=false \
             -ldflags="-s -w" \
-            -o "$archive_dir/sync-oauth-model-availability" ./cmd/sync_oauth_model_availability/
+            -o "$helper_archive_dir/sync-oauth-model-availability" ./cmd/sync_oauth_model_availability/
 
           if readelf -l "$archive_dir/cli-proxy-api" | grep -q 'Requesting program interpreter'; then
             readelf -l "$archive_dir/cli-proxy-api" >&2
@@ -522,11 +529,15 @@ jobs:
           mkdir -p "$archive_dir/docs"
           cp LICENSE README.md README_CN.md config.example.yaml "$archive_dir/"
           cp docs/oauth-model-availability.md "$archive_dir/docs/"
-          tar -C "$archive_dir" -czf "dist/$archive_name" cli-proxy-api sync-oauth-model-availability LICENSE README.md README_CN.md config.example.yaml docs/oauth-model-availability.md
+          tar -C "$archive_dir" -czf "dist/$archive_name" cli-proxy-api LICENSE README.md README_CN.md config.example.yaml docs/oauth-model-availability.md
+          cp LICENSE docs/oauth-model-availability.md "$helper_archive_dir/"
+          tar -C "$helper_archive_dir" -czf "dist/$helper_archive_name" sync-oauth-model-availability LICENSE oauth-model-availability.md
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
-          path: dist/CLIProxyAPI_*
+          path: |
+            dist/CLIProxyAPI_*
+            dist/oauth-model-availability-helper_*
           if-no-files-found: error
       - name: Upload release assets
         shell: bash
@@ -535,7 +546,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          assets=(dist/CLIProxyAPI_*.tar.gz)
+          assets=(dist/CLIProxyAPI_*.tar.gz dist/oauth-model-availability-helper_*.tar.gz)
           if [[ ${#assets[@]} -eq 0 ]]; then
             printf 'expected archive assets, found %s\n' "${#assets[@]}" >&2
             printf '%s\n' "${assets[@]}" >&2
@@ -554,12 +565,14 @@ jobs:
           gh release download "$GITHUB_REF_NAME" \
             --pattern 'CLIProxyAPI_*.tar.gz' \
             --pattern 'CLIProxyAPI_*.zip' \
+            --pattern 'oauth-model-availability-helper_*.tar.gz' \
+            --pattern 'oauth-model-availability-helper_*.zip' \
             --dir "$tmp_dir" \
             --clobber
           (
             cd "$tmp_dir"
             shopt -s nullglob
-            archives=(CLIProxyAPI_*.tar.gz CLIProxyAPI_*.zip)
+            archives=(CLIProxyAPI_*.tar.gz CLIProxyAPI_*.zip oauth-model-availability-helper_*.tar.gz oauth-model-availability-helper_*.zip)
             if [[ ${#archives[@]} -eq 0 ]]; then
               echo "No release archives found"
               exit 0
@@ -671,21 +684,27 @@ jobs:
 
           archive_dir="dist/${TARGET}/archive"
           archive_name="CLIProxyAPI_${RELEASE_VERSION}_freebsd_${ASSET_ARCH}${ASSET_SUFFIX}.tar.gz"
-          mkdir -p "$archive_dir"
+          helper_archive_dir="dist/${TARGET}/oauth-model-availability-helper"
+          helper_archive_name="oauth-model-availability-helper_${RELEASE_VERSION}_freebsd_${ASSET_ARCH}.tar.gz"
+          mkdir -p "$archive_dir" "$helper_archive_dir"
 
           echo "Packaging ${archive_name}"
           cp "dist/${TARGET}/bin/cli-proxy-api" "$archive_dir/cli-proxy-api"
           CGO_ENABLED=0 GOOS=freebsd GOARCH="$TARGET_GOARCH" go build -buildvcs=false \
             -ldflags="-s -w" \
-            -o "$archive_dir/sync-oauth-model-availability" ./cmd/sync_oauth_model_availability/
+            -o "$helper_archive_dir/sync-oauth-model-availability" ./cmd/sync_oauth_model_availability/
           mkdir -p "$archive_dir/docs"
           cp LICENSE README.md README_CN.md config.example.yaml "$archive_dir/"
           cp docs/oauth-model-availability.md "$archive_dir/docs/"
-          tar -C "$archive_dir" -czf "dist/$archive_name" cli-proxy-api sync-oauth-model-availability LICENSE README.md README_CN.md config.example.yaml docs/oauth-model-availability.md
+          tar -C "$archive_dir" -czf "dist/$archive_name" cli-proxy-api LICENSE README.md README_CN.md config.example.yaml docs/oauth-model-availability.md
+          cp LICENSE docs/oauth-model-availability.md "$helper_archive_dir/"
+          tar -C "$helper_archive_dir" -czf "dist/$helper_archive_name" sync-oauth-model-availability LICENSE oauth-model-availability.md
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
-          path: dist/CLIProxyAPI_*
+          path: |
+            dist/CLIProxyAPI_*
+            dist/oauth-model-availability-helper_*
           if-no-files-found: error
       - name: Upload release assets
         shell: bash
@@ -694,7 +713,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          assets=(dist/CLIProxyAPI_*.tar.gz)
+          assets=(dist/CLIProxyAPI_*.tar.gz dist/oauth-model-availability-helper_*.tar.gz)
           if [[ ${#assets[@]} -eq 0 ]]; then
             printf 'expected archive assets, found %s\n' "${#assets[@]}" >&2
             printf '%s\n' "${assets[@]}" >&2
@@ -713,12 +732,14 @@ jobs:
           gh release download "$GITHUB_REF_NAME" \
             --pattern 'CLIProxyAPI_*.tar.gz' \
             --pattern 'CLIProxyAPI_*.zip' \
+            --pattern 'oauth-model-availability-helper_*.tar.gz' \
+            --pattern 'oauth-model-availability-helper_*.zip' \
             --dir "$tmp_dir" \
             --clobber
           (
             cd "$tmp_dir"
             shopt -s nullglob
-            archives=(CLIProxyAPI_*.tar.gz CLIProxyAPI_*.zip)
+            archives=(CLIProxyAPI_*.tar.gz CLIProxyAPI_*.zip oauth-model-availability-helper_*.tar.gz oauth-model-availability-helper_*.zip)
             if [[ ${#archives[@]} -eq 0 ]]; then
               echo "No release archives found"
               exit 0
@@ -751,7 +772,7 @@ jobs:
           set -euo pipefail
           cd dist
           shopt -s nullglob
-          archives=(CLIProxyAPI_*.tar.gz CLIProxyAPI_*.zip vertex-region-models_*.zip)
+          archives=(CLIProxyAPI_*.tar.gz CLIProxyAPI_*.zip oauth-model-availability-helper_*.tar.gz oauth-model-availability-helper_*.zip vertex-region-models_*.zip)
           if [[ ${#archives[@]} -eq 0 ]]; then
             echo "No release archives found"
             exit 0

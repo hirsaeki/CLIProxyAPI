@@ -132,8 +132,7 @@ plugins/
 The plugin ZIP is extracted into `~/.cli-proxy-api`, and `plugins.dir` points to
 `~/.cli-proxy-api/plugins`. This location remains stable when WinGet launches
 the server through an alias under `Microsoft\WinGet\Links`. The server archives
-and WinGet portable package contain no plugin DLL; their executable list may
-also include first-party CLIProxyAPI utilities. WinGet does not modify user
+and WinGet portable package contain no plugin DLL. WinGet does not modify user
 configuration; both the global plugin host and `vertex-region-models` must be
 enabled explicitly.
 
@@ -169,7 +168,7 @@ enabled explicitly.
 - [x] Publish versioned Windows x64/ARM64 plugin ZIPs separately from server archives and add matching PR CI builds.
 - [x] Serialize Windows Go C-shared calls, move blocking host callback work off
   the foreign callback stack, and run concurrent amd64 DLL integration tests.
-- [x] Keep plugin DLLs out of the WinGet nested portable executable list.
+- [x] Keep the WinGet nested portable list limited to the server executable.
 - [x] Reconcile configuration, plugin, WinGet, and lifecycle documentation with the implementation.
 - [x] Run formatting, focused tests, plugin build, the full Go test suite, and
   the required server compile check.

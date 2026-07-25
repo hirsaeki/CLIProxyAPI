@@ -40,14 +40,14 @@ foreach ($file in $manifestFiles) {
 winget validate --manifest $manifestDir
 winget install --manifest $manifestDir
 cli-proxy-api --version
-sync-oauth-model-availability -h
 ```
 
 WinGet selects the x64 or ARM64 server archive for the current machine. The
-archive contains `cli-proxy-api.exe`, `sync-oauth-model-availability.exe`, and
-documentation, but no plugin DLL. See
-[`oauth-model-availability.md`](oauth-model-availability.md#quick-start) for
-the helper workflow.
+archive contains `cli-proxy-api.exe` and documentation, but no plugin DLL or
+OAuth model availability helper. The helper is an optional separate GitHub
+Release asset and is not registered by WinGet. See
+[`oauth-model-availability.md`](oauth-model-availability.md#quick-start) for its
+download and usage workflow.
 
 ### Install the Vertex region models plugin
 
@@ -198,6 +198,5 @@ Before merging the generated pull request, verify:
 - The server ZIPs do not contain plugin DLLs.
 - Each plugin ZIP contains
   `plugins/windows/<arch>/vertex-region-models-v<version>.dll`.
-- `NestedInstallerFiles` contains `cli-proxy-api.exe` and
-  `sync-oauth-model-availability.exe`, and contains no plugin DLL.
+- `NestedInstallerFiles` contains only `cli-proxy-api.exe`.
 - The `winget validate` step completed successfully.

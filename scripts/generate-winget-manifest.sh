@@ -78,16 +78,12 @@ Installers:
   NestedInstallerFiles:
   - RelativeFilePath: cli-proxy-api.exe
     PortableCommandAlias: cli-proxy-api
-  - RelativeFilePath: sync-oauth-model-availability.exe
-    PortableCommandAlias: sync-oauth-model-availability
   InstallerUrl: https://github.com/$repository/releases/download/$release_tag/$amd64_asset
   InstallerSha256: "$amd64_checksum"
 - Architecture: arm64
   NestedInstallerFiles:
   - RelativeFilePath: cli-proxy-api.exe
     PortableCommandAlias: cli-proxy-api
-  - RelativeFilePath: sync-oauth-model-availability.exe
-    PortableCommandAlias: sync-oauth-model-availability
   InstallerUrl: https://github.com/$repository/releases/download/$release_tag/$arm64_asset
   InstallerSha256: "$arm64_checksum"
 ManifestType: installer

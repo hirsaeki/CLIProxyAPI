@@ -11,14 +11,23 @@ helper and do not share plugin lifecycle or cache state with Vertex.
 
 ## Quick Start
 
-Download and extract the CLIProxyAPI release archive for your platform. It
-contains both `cli-proxy-api` and `sync-oauth-model-availability`, plus this
-document under `docs/`. Windows uses the `.exe` suffix. WinGet installations
-register both executable names as command aliases.
+Download and extract the CLIProxyAPI release archive for your platform. Then
+download the matching optional helper asset from the same GitHub Release:
+
+```text
+oauth-model-availability-helper_<version>_<os>_<arch>.<format>
+```
+
+The helper is intentionally separate from the main archive and WinGet package
+so its official-client download and credential-inspection behavior cannot
+affect malware scanning of the server distribution. The helper archive contains
+`sync-oauth-model-availability`, this document, and the license. Windows uses
+the `.exe` suffix.
 
 The commands below assume a Unix-like shell in the extracted archive directory.
-On Windows, use the corresponding `.exe` name; omit `./` when using a WinGet
-command alias.
+On Windows, use the corresponding `.exe` name. WinGet provides an alias for
+`cli-proxy-api`, but not for the separately downloaded helper; invoke the helper
+from the directory where you extracted its archive.
 
 ### 1. Prepare both login states
 
