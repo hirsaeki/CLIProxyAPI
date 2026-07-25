@@ -20,6 +20,14 @@ assert_contains() {
   grep -Fq -- "$expected" "$file" || fail "expected '$expected' in ${file#$repo_root/}"
 }
 
+assert_not_contains() {
+  local unexpected="$1"
+  local file="$2"
+  if grep -Fq -- "$unexpected" "$file"; then
+    fail "did not expect '$unexpected' in ${file#$repo_root/}"
+  fi
+}
+
 assert_count() {
   local expected_count="$1"
   local expected="$2"
@@ -45,9 +53,13 @@ for workflow in "$release_workflow" "$pr_workflow"; do
   assert_contains 'TestVertexRegionModelsPluginCABI' "$workflow"
 done
 
-if grep -Fq -- 'windows-11-arm' "$release_workflow" "$pr_workflow"; then
-  fail 'Windows ARM64 plugin builds must use the pinned cross-toolchain on windows-latest'
-fi
+assert_contains 'runner: windows-11-arm' "$release_workflow"
+assert_contains 'build-windows-plugin:' "$release_workflow"
+assert_contains 'name: build Windows plugin ${{ matrix.goarch }}' "$release_workflow"
+assert_not_contains 'WINDOWS_CC:' "$release_workflow"
+assert_not_contains 'export CC="$WINDOWS_CC"' "$release_workflow"
+assert_contains 'CC: ${{ matrix.cc }}' "$release_workflow"
+assert_count 1 '      - build-windows-plugin' "$release_workflow"
 
 assert_count 2 'cc: x86_64-w64-mingw32-clang' "$release_workflow" "$pr_workflow"
 assert_count 2 'cc: aarch64-w64-mingw32-clang' "$release_workflow" "$pr_workflow"
