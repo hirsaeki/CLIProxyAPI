@@ -204,15 +204,13 @@ jobs:
             -ldflags="-s -w" \
             -o "$helper_archive_dir/$helper_name" ./cmd/sync_oauth_model_availability/
 
-          mkdir -p "$archive_dir/docs"
           cp LICENSE README.md README_CN.md config.example.yaml "$archive_dir/"
-          cp docs/oauth-model-availability.md "$archive_dir/docs/"
           if [[ "$ARCHIVE_FORMAT" == "zip" ]]; then
             powershell -NoProfile -Command "Compress-Archive -Path '${archive_dir}/*' -DestinationPath 'dist/${archive_name}' -Force"
             cp LICENSE docs/oauth-model-availability.md "$helper_archive_dir/"
             powershell -NoProfile -Command "Compress-Archive -Path '${helper_archive_dir}/*' -DestinationPath 'dist/${helper_archive_name}' -Force"
           else
-            tar -C "$archive_dir" -czf "dist/$archive_name" "$binary_name" LICENSE README.md README_CN.md config.example.yaml docs/oauth-model-availability.md
+            tar -C "$archive_dir" -czf "dist/$archive_name" "$binary_name" LICENSE README.md README_CN.md config.example.yaml
             cp LICENSE docs/oauth-model-availability.md "$helper_archive_dir/"
             tar -C "$helper_archive_dir" -czf "dist/$helper_archive_name" "$helper_name" LICENSE oauth-model-availability.md
           fi
@@ -442,10 +440,8 @@ jobs:
               fi
             '
 
-          mkdir -p "$archive_dir/docs"
           cp LICENSE README.md README_CN.md config.example.yaml "$archive_dir/"
-          cp docs/oauth-model-availability.md "$archive_dir/docs/"
-          tar -C "$archive_dir" -czf "dist/$archive_name" cli-proxy-api LICENSE README.md README_CN.md config.example.yaml docs/oauth-model-availability.md
+          tar -C "$archive_dir" -czf "dist/$archive_name" cli-proxy-api LICENSE README.md README_CN.md config.example.yaml
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
@@ -568,10 +564,8 @@ jobs:
             exit 1
           fi
 
-          mkdir -p "$archive_dir/docs"
           cp LICENSE README.md README_CN.md config.example.yaml "$archive_dir/"
-          cp docs/oauth-model-availability.md "$archive_dir/docs/"
-          tar -C "$archive_dir" -czf "dist/$archive_name" cli-proxy-api LICENSE README.md README_CN.md config.example.yaml docs/oauth-model-availability.md
+          tar -C "$archive_dir" -czf "dist/$archive_name" cli-proxy-api LICENSE README.md README_CN.md config.example.yaml
           cp LICENSE docs/oauth-model-availability.md "$helper_archive_dir/"
           tar -C "$helper_archive_dir" -czf "dist/$helper_archive_name" sync-oauth-model-availability LICENSE oauth-model-availability.md
       - uses: actions/upload-artifact@v4
@@ -735,10 +729,8 @@ jobs:
           CGO_ENABLED=0 GOOS=freebsd GOARCH="$TARGET_GOARCH" go build -buildvcs=false \
             -ldflags="-s -w" \
             -o "$helper_archive_dir/sync-oauth-model-availability" ./cmd/sync_oauth_model_availability/
-          mkdir -p "$archive_dir/docs"
           cp LICENSE README.md README_CN.md config.example.yaml "$archive_dir/"
-          cp docs/oauth-model-availability.md "$archive_dir/docs/"
-          tar -C "$archive_dir" -czf "dist/$archive_name" cli-proxy-api LICENSE README.md README_CN.md config.example.yaml docs/oauth-model-availability.md
+          tar -C "$archive_dir" -czf "dist/$archive_name" cli-proxy-api LICENSE README.md README_CN.md config.example.yaml
           cp LICENSE docs/oauth-model-availability.md "$helper_archive_dir/"
           tar -C "$helper_archive_dir" -czf "dist/$helper_archive_name" sync-oauth-model-availability LICENSE oauth-model-availability.md
       - uses: actions/upload-artifact@v4

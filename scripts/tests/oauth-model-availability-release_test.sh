@@ -49,6 +49,13 @@ assert_contains 'oauth-model-availability-helper_' "$quick_start"
 assert_not_contains 'PortableCommandAlias: sync-oauth-model-availability' "$repo_root/scripts/generate-winget-manifest.sh"
 assert_not_contains '-o "$archive_dir/$helper_name"' "$release_workflow"
 
+if grep -Fq 'cp docs/oauth-model-availability.md "$archive_dir/' "$release_workflow"; then
+  fail 'main release archives must not contain the OAuth model availability documentation'
+fi
+if grep -F 'tar -C "$archive_dir" -czf "dist/$archive_name"' "$release_workflow" | grep -Fq 'docs/oauth-model-availability.md'; then
+  fail 'main release archives must not contain the OAuth model availability documentation'
+fi
+
 if grep -F 'tar -C "$archive_dir" -czf "dist/$archive_name"' "$release_workflow" | grep -Fq 'sync-oauth-model-availability'; then
   fail 'main release archives must not contain the OAuth model availability helper'
 fi
