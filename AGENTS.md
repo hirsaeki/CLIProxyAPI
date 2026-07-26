@@ -40,6 +40,15 @@ go build -o test-output ./cmd/server && rm test-output # Verify compile (REQUIRE
 - `sdk/cliproxy/` — Embeddable SDK entry (service/builder/watchers/pipeline)
 - `test/` — Cross-module integration tests
 
+## Fork Maintenance and Upstream Compatibility
+- Treat upstream file structure and responsibility boundaries as authoritative.
+- Keep fork-specific behavior in dedicated fork-owned files whenever possible; changes to upstream-owned files must be limited to the smallest required integration seams.
+- Do not retain obsolete upstream monolith implementations after upstream splits or relocates them, and do not resolve structural conflicts by blindly choosing all of `ours` or `theirs`.
+- Before patching an upstream-owned file, prefer an existing hook, interface, builder option, or dedicated extension file.
+- Keep model availability and native plugin-candidate behavior behind the integration points documented in `docs/fork-maintenance.md`.
+- When a small generic upstream hook could eliminate a recurring fork patch, keep the local seam minimal and record the upstream contribution candidate in `docs/fork-maintenance.md`.
+- Follow `docs/fork-maintenance.md` for upstream sync conflict resolution, fork-owned file boundaries, and required regression checks.
+
 ## Code Conventions
 - Keep changes small and simple (KISS)
 - Comments in English only

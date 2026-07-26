@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -217,6 +218,24 @@ func (s *Service) hasAuthoritativeOAuthModelAvailability(provider, authID, authK
 	}
 	_, ok := s.oauthModelAvailability.lookup(provider, authID)
 	return ok
+}
+
+func (s *Service) warnOAuthModelAvailabilityConfigChange(oldCfg, newCfg *config.Config) {
+	if s == nil || newCfg == nil {
+		return
+	}
+	oldPath := ""
+	if oldCfg != nil {
+		oldPath = strings.TrimSpace(oldCfg.OAuthModelAvailabilityFile)
+	}
+	newPath := strings.TrimSpace(newCfg.OAuthModelAvailabilityFile)
+	if newPath == oldPath {
+		return
+	}
+	log.WithFields(log.Fields{
+		"configured_path": newPath,
+		"loaded_path":     s.oauthModelAvailabilityPath,
+	}).Warn("OAuth model availability path changed; restart required to load the new sidecar")
 }
 
 func sidecarModelInfo(provider string, model oauthModelAvailabilityModel) *registry.ModelInfo {
