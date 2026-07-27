@@ -7,6 +7,7 @@ on:
       - '.github/workflows/winget-manifest-test.yml'
       - 'scripts/generate-winget-manifest.sh'
       - 'scripts/tests/generate-winget-manifest_test.sh'
+      - 'scripts/tests/winget-release-workflow_test.sh'
   workflow_dispatch:
 
 permissions:
@@ -20,3 +21,5 @@ jobs:
         uses: actions/checkout@v4
       - name: Test WinGet manifest generator
         run: bash scripts/tests/generate-winget-manifest_test.sh
+      - name: Test WinGet release workflow
+        run: bash scripts/tests/winget-release-workflow_test.sh

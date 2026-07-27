@@ -870,6 +870,7 @@ jobs:
             throw "winget manifest validation failed with exit code $LASTEXITCODE"
           }
       - name: Create WinGet manifest pull request
+        id: create-winget-pr
         uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ github.token }}
@@ -886,3 +887,35 @@ jobs:
             - Validation: `winget validate --manifest winget`
           add-paths: |
             winget/*.yaml
+      - name: Merge WinGet manifest after checks pass
+        if: steps.create-winget-pr.outputs.pull-request-number != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.create-winget-pr.outputs.pull-request-number }}
+        run: |
+          set -euo pipefail
+
+          expected_checks=(
+            "build"
+            "build Windows plugin (amd64)"
+            "build Windows plugin (arm64)"
+            "ensure-no-translator-changes"
+          )
+          while true; do
+            checks="$(gh pr checks "$PR_NUMBER" --json name --jq '.[].name' || true)"
+            all_registered=true
+            for expected_check in "${expected_checks[@]}"; do
+              if ! grep -Fxq "$expected_check" <<<"$checks"; then
+                all_registered=false
+                break
+              fi
+            done
+            if [[ "$all_registered" = true ]]; then
+              break
+            fi
+            sleep 5
+          done
+
+          gh pr checks "$PR_NUMBER" --watch --fail-fast
+          gh pr merge --merge --delete-branch "$PR_NUMBER"
