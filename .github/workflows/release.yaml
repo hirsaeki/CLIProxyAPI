@@ -824,6 +824,15 @@ jobs:
       contents: write
       pull-requests: write
     steps:
+      - name: Verify WinGet automation token
+        shell: bash
+        env:
+          WINGET_AUTOMATION_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+        run: |
+          if [ -z "$WINGET_AUTOMATION_TOKEN" ]; then
+            echo "UPSTREAM_SYNC_TOKEN is required for WinGet pull request automation." >&2
+            exit 1
+          fi
       - name: Checkout default branch
         uses: actions/checkout@v6
         with:
@@ -873,7 +882,7 @@ jobs:
         id: create-winget-pr
         uses: peter-evans/create-pull-request@v8
         with:
-          token: ${{ github.token }}
+          token: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
           base: ${{ github.event.repository.default_branch }}
           branch: automation/winget-${{ github.ref_name }}
           delete-branch: true
@@ -889,6 +898,7 @@ jobs:
             winget/*.yaml
       - name: Merge WinGet manifest after checks pass
         if: steps.create-winget-pr.outputs.pull-request-number != ''
+        timeout-minutes: 120
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -902,6 +912,8 @@ jobs:
             "build Windows plugin (arm64)"
             "ensure-no-translator-changes"
           )
+          head_sha="$(gh pr view "$PR_NUMBER" --json headRefOid --jq '.headRefOid')"
+          registration_deadline=$((SECONDS + 300))
           while true; do
             checks="$(gh pr checks "$PR_NUMBER" --json name --jq '.[].name' || true)"
             all_registered=true
@@ -913,6 +925,19 @@ jobs:
             done
             if [[ "$all_registered" = true ]]; then
               break
+            fi
+
+            action_required_count="$(
+              gh api "repos/${GITHUB_REPOSITORY}/commits/${head_sha}/check-suites" \
+                --jq '[.check_suites[] | select(.conclusion == "action_required")] | length'
+            )"
+            if [[ "$action_required_count" -gt 0 ]]; then
+              echo "PR checks require manual approval; verify the automation token and Actions approval policy." >&2
+              exit 1
+            fi
+            if (( SECONDS >= registration_deadline )); then
+              echo "Timed out waiting for required PR checks to register." >&2
+              exit 1
             fi
             sleep 5
           done
