@@ -36,6 +36,14 @@ jobs:
               return;
             }
 
+            if (
+              pr.head?.repo?.full_name === `${owner}/${repo}` &&
+              headRef?.startsWith("automation/winget-")
+            ) {
+              core.info(`PR #${prNumber} is an internal WinGet automation PR; skipping retarget.`);
+              return;
+            }
+
             if (headRef === desiredBase) {
               core.info(`PR #${prNumber} is ${desiredBase} -> main; skipping retarget.`);
               return;
