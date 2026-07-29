@@ -1,0 +1,163 @@
+name: Sync fork with upstream
+
+on:
+  schedule:
+    - cron: "0 */4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-upstream-${{ github.repository }}
+  cancel-in-progress: false
+
+env:
+  # Optional: set "owner/repo" to override automatic upstream detection.
+  UPSTREAM: ""
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Verify sync token
+        env:
+          SYNC_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+        run: |
+          if [ -z "$SYNC_TOKEN" ]; then
+            echo "UPSTREAM_SYNC_TOKEN is required for syncing workflow files." >&2
+            exit 1
+          fi
+
+      - name: Install jq
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+
+      - name: Set Git identity
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Detect upstream
+        id: detect
+        env:
+          GITHUB_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+          OVERRIDE_UPSTREAM: ${{ env.UPSTREAM }}
+          FORK_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "${OVERRIDE_UPSTREAM}" ]; then
+            echo "upstream=$OVERRIDE_UPSTREAM" >> "$GITHUB_OUTPUT"
+            echo "branch=$FORK_DEFAULT_BRANCH" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          repo="${GITHUB_REPOSITORY}"
+          json=$(curl -fsSL \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${repo}")
+
+          upstream=$(echo "$json" | jq -r '.parent.full_name // empty')
+          upstream_branch=$(echo "$json" | jq -r '.parent.default_branch // empty')
+
+          if [ -z "$upstream" ] || [ "$upstream" = "null" ]; then
+            echo "This repo does not look like a fork (no parent)."
+            exit 0
+          fi
+
+          if [ -z "$upstream_branch" ] || [ "$upstream_branch" = "null" ]; then
+            upstream_branch="$FORK_DEFAULT_BRANCH"
+          fi
+
+          echo "upstream=$upstream" >> "$GITHUB_OUTPUT"
+          echo "branch=$upstream_branch" >> "$GITHUB_OUTPUT"
+
+      - name: Sync (merge; fail on conflict)
+        if: steps.detect.outputs.upstream != ''
+        env:
+          UPSTREAM_REPO: ${{ steps.detect.outputs.upstream }}
+          TARGET_BRANCH: ${{ steps.detect.outputs.branch }}
+          GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          git config --local user.name  "github-actions[bot]"
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          echo "Upstream: $UPSTREAM_REPO"
+          echo "Branch: $TARGET_BRANCH"
+          git config --local --get user.name
+          git config --local --get user.email
+
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
+          git fetch --no-tags upstream "+refs/heads/${TARGET_BRANCH}:refs/remotes/upstream/${TARGET_BRANCH}"
+          git checkout -B "$TARGET_BRANCH" "origin/${TARGET_BRANCH}"
+
+          if ! git merge --ff-only "upstream/${TARGET_BRANCH}"; then
+            git merge --no-edit "upstream/${TARGET_BRANCH}"
+          fi
+
+          git push origin "$TARGET_BRANCH"
+
+          if [ -f .github/workflows/docker-image.yml ]; then
+            docker_workflow_state="$(
+              gh api "repos/${GH_REPO}/actions/workflows/docker-image.yml" --jq '.state'
+            )"
+            if [ "$docker_workflow_state" = "active" ]; then
+              gh workflow disable docker-image.yml --repo "$GH_REPO"
+              echo "Disabled upstream Docker Hub workflow in the fork."
+            else
+              echo "Upstream Docker Hub workflow is already inactive (${docker_workflow_state})."
+            fi
+          fi
+
+          latest_upstream_tag="$(
+            git ls-remote --tags --refs upstream 'refs/tags/v*' |
+              awk '{ sub("refs/tags/", "", $2); print $2 }' |
+              grep -E '^v[0-9]+([.][0-9]+)*$' |
+              sort -V |
+              tail -n 1 || true
+          )"
+          if [ -z "$latest_upstream_tag" ]; then
+            echo "No upstream release tag found."
+            exit 0
+          fi
+
+          echo "Latest upstream release tag: $latest_upstream_tag"
+          tag_created=false
+          if git ls-remote --exit-code --tags origin "refs/tags/${latest_upstream_tag}" >/dev/null 2>&1; then
+            echo "Fork already has ${latest_upstream_tag}."
+          else
+            git fetch --no-tags upstream "+refs/tags/${latest_upstream_tag}:refs/upstream-tags/${latest_upstream_tag}"
+            if ! git merge-base --is-ancestor "refs/upstream-tags/${latest_upstream_tag}^{}" HEAD; then
+              echo "Upstream tag ${latest_upstream_tag} is not contained in ${TARGET_BRANCH}; release tag skipped."
+              exit 0
+            fi
+
+            git tag -a "$latest_upstream_tag" -m "Follow upstream release ${latest_upstream_tag}" HEAD
+            git push origin "refs/tags/${latest_upstream_tag}"
+            tag_created=true
+          fi
+
+          if gh release view "$latest_upstream_tag" --repo "$GH_REPO" >/dev/null 2>&1; then
+            echo "Release ${latest_upstream_tag} already exists; release dispatch skipped."
+            exit 0
+          fi
+
+          if [ "$tag_created" = true ]; then
+            echo "Tag ${latest_upstream_tag} pushed; release workflow will be triggered by the tag push."
+            exit 0
+          fi
+
+          gh workflow run release.yaml --repo "$GH_REPO" --ref "$latest_upstream_tag"

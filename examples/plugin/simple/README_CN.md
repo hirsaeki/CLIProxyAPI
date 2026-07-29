@@ -162,6 +162,7 @@ plugins:
 ```
 
 `plugins.configs.<pluginID>` 会作为标准化 YAML 字节放进 JSON 请求，传给 `plugin.register` 或 `plugin.reconfigure`。
+生命周期请求还包含 `schema_version` 和可选的 `host_features`。插件必须忽略未知功能，并将缺失的功能视为不支持。`model-provider-native-candidates` 表示原生候选模型会在 `model.for_auth` 中提供给模型提供方插件。
 
 ## 宿主 HTTP 桥接
 

@@ -6,22 +6,93 @@ on:
 permissions:
   contents: read
 
+env:
+  LLVM_MINGW_VERSION: '20260616'
+  LLVM_MINGW_SHA256: 'b9b68a4d276e16fa25802aaba458e4638f64b3884c290aaccdc2d87083b6ca35'
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Refresh models catalog
-        run: |
-          git fetch --depth 1 https://github.com/router-for-me/models.git main
-          git show FETCH_HEAD:models.json > internal/registry/models/models.json
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
+      - name: Refresh models catalog
+        run: bash .github/scripts/refresh-model-catalogs.sh
+      - name: Validate Windows plugin workflows
+        run: bash scripts/tests/windows-plugin-workflow_test.sh
+      - name: Validate OAuth model availability release packaging
+        run: bash scripts/tests/oauth-model-availability-release_test.sh
       - name: Build
         run: |
           go build -o test-output ./cmd/server
+          go build -o sync-oauth-model-availability ./cmd/sync_oauth_model_availability
           rm -f test-output
+          rm -f sync-oauth-model-availability
+
+  windows-plugin:
+    name: build Windows plugin (${{ matrix.goarch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            goarch: amd64
+            cc: x86_64-w64-mingw32-clang
+          - runner: windows-latest
+            goarch: arm64
+            cc: aarch64-w64-mingw32-clang
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install LLVM-MinGW
+        shell: pwsh
+        run: >-
+          & .github/scripts/install-llvm-mingw.ps1
+          -Version $env:LLVM_MINGW_VERSION
+          -Sha256 $env:LLVM_MINGW_SHA256
+          -Compiler '${{ matrix.cc }}'
+      - name: Build Vertex region models plugin
+        shell: bash
+        env:
+          GOARCH: ${{ matrix.goarch }}
+          CC: ${{ matrix.cc }}
+        run: |
+          set -euo pipefail
+          plugin_package_dir="dist/vertex-region-models"
+          plugin_dir="$plugin_package_dir/plugins/windows/$GOARCH"
+          plugin_output="${PWD}/${plugin_dir}/vertex-region-models-vci.dll"
+          plugin_link_output="${PWD}/${plugin_dir}/vertex_region_models.dll"
+          mkdir -p "$plugin_dir"
+          pushd examples/plugin/vertex-region-models/go >/dev/null
+          CGO_ENABLED=1 GOOS=windows GOARCH="$GOARCH" go build \
+            -buildmode=c-shared \
+            -o "$plugin_link_output" .
+          popd >/dev/null
+          rm -f "${plugin_link_output%.dll}.h"
+          mv "$plugin_link_output" "$plugin_output"
+          test -f "$plugin_output"
+          test ! -f "${plugin_link_output%.dll}.h"
+          powershell -NoProfile -Command "Compress-Archive -Path '${plugin_package_dir}/*' -DestinationPath 'dist/vertex-region-models_ci_windows_${GOARCH}.zip' -Force"
+          test -f "dist/vertex-region-models_ci_windows_${GOARCH}.zip"
+      - name: Test Windows Vertex plugin runtime
+        if: ${{ matrix.goarch == 'amd64' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          plugin_path="${PWD}/dist/vertex-region-models/plugins/windows/amd64/vertex-region-models-vci.dll"
+          plugin_path="$(cygpath -w "$plugin_path")"
+          CLIPROXY_VERTEX_REGION_MODELS_PLUGIN="$plugin_path" \
+            go test ./internal/pluginhost \
+              -run '^(TestDynamicLibraryClientSerializesCalls|TestVertexRegionModelsPluginCABI)$' \
+              -count=1

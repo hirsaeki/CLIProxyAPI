@@ -2,9 +2,9 @@ name: release
 
 on:
   push:
-    # run only against tags
     tags:
-      - '*'
+      - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -12,9 +12,12 @@ permissions:
 env:
   GH_REPO: ${{ github.repository }}
   GO_VERSION: '1.26.4'
+  LLVM_MINGW_VERSION: '20260616'
+  LLVM_MINGW_SHA256: 'b9b68a4d276e16fa25802aaba458e4638f64b3884c290aaccdc2d87083b6ca35'
 
 jobs:
   prepare-release:
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -26,6 +29,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          release_title="${GITHUB_REF_NAME} (Local Model Overlay build)"
           release_notes_file="$(mktemp)"
           generated_notes_file="$(mktemp)"
           changelog_entries_file="$(mktemp)"
@@ -40,16 +44,32 @@ jobs:
           - `CLIProxyAPI_<version>_linux_<arch>.tar.gz` is the default Linux build. It supports dynamic library plugins and is built against a GLIBC 2.17 baseline.
           - `CLIProxyAPI_<version>_linux_<arch>_no-plugin.tar.gz` is the portable Linux build for musl-based or older systems such as OpenWrt. It does not support dynamic library plugins.
 
+          The optional OAuth model availability helper is distributed separately as `oauth-model-availability-helper_<version>_<os>_<arch>.<format>`. It is intentionally excluded from the main CLIProxyAPI archives and WinGet package.
+
           ## FreeBSD release assets
 
           - `CLIProxyAPI_<version>_freebsd_aarch64_no-plugin.tar.gz` is the FreeBSD arm64 build. It is built without CGO and does not support dynamic library plugins.
 
+          ## Windows release assets
+
+          - `CLIProxyAPI_<version>_windows_<arch>.zip` contains the server and documentation only.
+          - [Vertex region models plugin for Windows x64](https://github.com/__REPOSITORY__/releases/download/__TAG__/vertex-region-models___VERSION___windows_amd64.zip)
+          - [Vertex region models plugin for Windows ARM64](https://github.com/__REPOSITORY__/releases/download/__TAG__/vertex-region-models___VERSION___windows_aarch64.zip)
+
+          Each plugin ZIP contains `plugins/windows/<arch>/vertex-region-models-v<version>.dll`. Extract the matching ZIP into `~/.cli-proxy-api`, set `plugins.dir` to `~/.cli-proxy-api/plugins`, and explicitly enable `vertex-region-models`.
+
           <!-- cliproxyapi-linux-release-assets:end -->
           EOF
+          release_version="${GITHUB_REF_NAME#v}"
+          sed -i \
+            -e "s|__REPOSITORY__|${GH_REPO}|g" \
+            -e "s|__TAG__|${GITHUB_REF_NAME}|g" \
+            -e "s|__VERSION__|${release_version}|g" \
+            "$release_notes_file"
 
           git fetch --force --tags
           previous_tag=""
-          if previous_tag_value="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null)"; then
+          if previous_tag_value="$(git describe --tags --match 'v[0-9]*' --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null)"; then
             previous_tag="$previous_tag_value"
             changelog_range="${previous_tag}..${GITHUB_REF_NAME}"
           else
@@ -86,9 +106,9 @@ jobs:
           } > "$updated_notes_file"
 
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release edit "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file "$updated_notes_file"
+            gh release edit "$GITHUB_REF_NAME" --title "$release_title" --notes-file "$updated_notes_file"
           else
-            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file "$updated_notes_file"
+            gh release create "$GITHUB_REF_NAME" --title "$release_title" --notes-file "$updated_notes_file"
           fi
 
   build-hosted:
@@ -127,19 +147,16 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - name: Refresh models catalog
-        shell: bash
-        run: |
-          set -euo pipefail
-          git fetch --depth 1 https://github.com/router-for-me/models.git main
-          git show FETCH_HEAD:models.json > internal/registry/models/models.json
-      - name: Fetch tags
-        shell: bash
-        run: git fetch --force --tags
       - uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
+      - name: Refresh models catalog
+        shell: bash
+        run: bash .github/scripts/refresh-model-catalogs.sh
+      - name: Fetch tags
+        shell: bash
+        run: git fetch --force --tags
       - uses: actions/cache@v4
         with:
           path: |
@@ -167,29 +184,42 @@ jobs:
         run: |
           set -euo pipefail
           binary_name="cli-proxy-api"
+          helper_name="sync-oauth-model-availability"
           if [[ "$GOOS" == "windows" ]]; then
             binary_name="cli-proxy-api.exe"
+            helper_name="sync-oauth-model-availability.exe"
           fi
 
           archive_dir="dist/${TARGET}/archive"
           archive_name="CLIProxyAPI_${RELEASE_VERSION}_${GOOS}_${ASSET_ARCH}.${ARCHIVE_FORMAT}"
+          helper_archive_dir="dist/${TARGET}/oauth-model-availability-helper"
+          helper_archive_name="oauth-model-availability-helper_${RELEASE_VERSION}_${GOOS}_${ASSET_ARCH}.${ARCHIVE_FORMAT}"
           rm -rf "dist/${TARGET}"
-          mkdir -p "$archive_dir"
+          mkdir -p "$archive_dir" "$helper_archive_dir"
 
           CGO_ENABLED=1 GOOS="$GOOS" GOARCH="$GOARCH" go build \
             -ldflags="-s -w -X main.Version=${RELEASE_VERSION} -X main.Commit=${COMMIT} -X main.BuildDate=${BUILD_DATE}" \
             -o "$archive_dir/$binary_name" ./cmd/server/
+          CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -buildvcs=false \
+            -ldflags="-s -w" \
+            -o "$helper_archive_dir/$helper_name" ./cmd/sync_oauth_model_availability/
 
           cp LICENSE README.md README_CN.md config.example.yaml "$archive_dir/"
           if [[ "$ARCHIVE_FORMAT" == "zip" ]]; then
             powershell -NoProfile -Command "Compress-Archive -Path '${archive_dir}/*' -DestinationPath 'dist/${archive_name}' -Force"
+            cp LICENSE docs/oauth-model-availability.md "$helper_archive_dir/"
+            powershell -NoProfile -Command "Compress-Archive -Path '${helper_archive_dir}/*' -DestinationPath 'dist/${helper_archive_name}' -Force"
           else
             tar -C "$archive_dir" -czf "dist/$archive_name" "$binary_name" LICENSE README.md README_CN.md config.example.yaml
+            cp LICENSE docs/oauth-model-availability.md "$helper_archive_dir/"
+            tar -C "$helper_archive_dir" -czf "dist/$helper_archive_name" "$helper_name" LICENSE oauth-model-availability.md
           fi
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
-          path: dist/CLIProxyAPI_*
+          path: |
+            dist/CLIProxyAPI_*
+            dist/oauth-model-availability-helper_*
           if-no-files-found: error
       - name: Upload release assets
         shell: bash
@@ -198,7 +228,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          assets=(dist/CLIProxyAPI_*.tar.gz dist/CLIProxyAPI_*.zip)
+          assets=(dist/CLIProxyAPI_*.tar.gz dist/CLIProxyAPI_*.zip dist/oauth-model-availability-helper_*.tar.gz dist/oauth-model-availability-helper_*.zip)
           if [[ ${#assets[@]} -eq 0 ]]; then
             printf 'expected archive assets, found %s\n' "${#assets[@]}" >&2
             printf '%s\n' "${assets[@]}" >&2
@@ -217,12 +247,15 @@ jobs:
           gh release download "$GITHUB_REF_NAME" \
             --pattern 'CLIProxyAPI_*.tar.gz' \
             --pattern 'CLIProxyAPI_*.zip' \
+            --pattern 'oauth-model-availability-helper_*.tar.gz' \
+            --pattern 'oauth-model-availability-helper_*.zip' \
+            --pattern 'vertex-region-models_*.zip' \
             --dir "$tmp_dir" \
             --clobber
           (
             cd "$tmp_dir"
             shopt -s nullglob
-            archives=(CLIProxyAPI_*.tar.gz CLIProxyAPI_*.zip)
+            archives=(CLIProxyAPI_*.tar.gz CLIProxyAPI_*.zip oauth-model-availability-helper_*.tar.gz oauth-model-availability-helper_*.zip vertex-region-models_*.zip)
             if [[ ${#archives[@]} -eq 0 ]]; then
               echo "No release archives found"
               exit 0
@@ -234,6 +267,94 @@ jobs:
             fi
           )
           gh release upload "$GITHUB_REF_NAME" "$tmp_dir/checksums.txt" --clobber
+
+  build-windows-plugin:
+    name: build Windows plugin ${{ matrix.goarch }}
+    needs: prepare-release
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goarch: amd64
+            asset_arch: amd64
+            cc: x86_64-w64-mingw32-clang
+          - goarch: arm64
+            asset_arch: aarch64
+            cc: aarch64-w64-mingw32-clang
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Install LLVM-MinGW
+        shell: pwsh
+        run: >-
+          & .github/scripts/install-llvm-mingw.ps1
+          -Version $env:LLVM_MINGW_VERSION
+          -Sha256 $env:LLVM_MINGW_SHA256
+          -Compiler '${{ matrix.cc }}'
+      - name: Generate Build Metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "RELEASE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - name: Build Vertex region models plugin
+        shell: bash
+        env:
+          GOARCH: ${{ matrix.goarch }}
+          ASSET_ARCH: ${{ matrix.asset_arch }}
+          CC: ${{ matrix.cc }}
+        run: |
+          set -euo pipefail
+          plugin_package_dir="dist/vertex-region-models"
+          plugin_dir="$plugin_package_dir/plugins/windows/$GOARCH"
+          plugin_archive_name="vertex-region-models_${RELEASE_VERSION}_windows_${ASSET_ARCH}.zip"
+          plugin_output="${PWD}/${plugin_dir}/vertex-region-models-v${RELEASE_VERSION}.dll"
+          plugin_link_output="${PWD}/${plugin_dir}/vertex_region_models.dll"
+          mkdir -p "$plugin_dir"
+          pushd examples/plugin/vertex-region-models/go >/dev/null
+          CGO_ENABLED=1 GOOS=windows GOARCH="$GOARCH" go build \
+            -buildmode=c-shared \
+            -o "$plugin_link_output" .
+          popd >/dev/null
+          rm -f "${plugin_link_output%.dll}.h"
+          mv "$plugin_link_output" "$plugin_output"
+          test -f "$plugin_output"
+          test ! -f "${plugin_link_output%.dll}.h"
+          powershell -NoProfile -Command "Compress-Archive -Path '${plugin_package_dir}/*' -DestinationPath 'dist/${plugin_archive_name}' -Force"
+          test -f "dist/$plugin_archive_name"
+      - name: Test Windows Vertex plugin runtime
+        if: ${{ matrix.goarch == 'amd64' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          plugin_path="${PWD}/dist/vertex-region-models/plugins/windows/amd64/vertex-region-models-v${RELEASE_VERSION}.dll"
+          plugin_path="$(cygpath -w "$plugin_path")"
+          CLIPROXY_VERTEX_REGION_MODELS_PLUGIN="$plugin_path" \
+            go test ./internal/pluginhost \
+              -run '^(TestDynamicLibraryClientSerializesCalls|TestVertexRegionModelsPluginCABI)$' \
+              -count=1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-plugin-${{ matrix.goarch }}
+          path: dist/vertex-region-models_*.zip
+          if-no-files-found: error
+      - name: Upload release asset
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          assets=(dist/vertex-region-models_*.zip)
+          if [[ ${#assets[@]} -ne 1 ]]; then
+            printf 'expected one plugin archive, found %s\n' "${#assets[@]}" >&2
+            exit 1
+          fi
+          gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
 
   build-linux-glibc:
     name: build linux-${{ matrix.goarch }} glibc
@@ -257,12 +378,13 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
       - name: Refresh models catalog
         shell: bash
-        run: |
-          set -euo pipefail
-          git fetch --depth 1 https://github.com/router-for-me/models.git main
-          git show FETCH_HEAD:models.json > internal/registry/models/models.json
+        run: bash .github/scripts/refresh-model-catalogs.sh
       - name: Fetch tags
         shell: bash
         run: git fetch --force --tags
@@ -307,7 +429,6 @@ jobs:
               CGO_ENABLED=1 GOOS=linux GOARCH="${GOARCH}" go build -buildvcs=false \
                 -ldflags="-s -w -X main.Version=${RELEASE_VERSION} -X main.Commit=${COMMIT} -X main.BuildDate=${BUILD_DATE}" \
                 -o "'"$archive_dir"'/cli-proxy-api" ./cmd/server/
-
               glibc_versions="$(readelf --version-info "'"$archive_dir"'/cli-proxy-api" | sed -n "s/.*Name: GLIBC_\([0-9.]*\).*/\1/p" | sort -Vu)"
               if [[ -n "${glibc_versions}" ]]; then
                 printf "GLIBC versions:\n%s\n" "${glibc_versions}"
@@ -388,19 +509,16 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - name: Refresh models catalog
-        shell: bash
-        run: |
-          set -euo pipefail
-          git fetch --depth 1 https://github.com/router-for-me/models.git main
-          git show FETCH_HEAD:models.json > internal/registry/models/models.json
-      - name: Fetch tags
-        shell: bash
-        run: git fetch --force --tags
       - uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
+      - name: Refresh models catalog
+        shell: bash
+        run: bash .github/scripts/refresh-model-catalogs.sh
+      - name: Fetch tags
+        shell: bash
+        run: git fetch --force --tags
       - uses: actions/cache@v4
         with:
           path: |
@@ -428,12 +546,17 @@ jobs:
 
           archive_dir="dist/${TARGET}/archive"
           archive_name="CLIProxyAPI_${RELEASE_VERSION}_linux_${ASSET_ARCH}_no-plugin.tar.gz"
+          helper_archive_dir="dist/${TARGET}/oauth-model-availability-helper"
+          helper_archive_name="oauth-model-availability-helper_${RELEASE_VERSION}_linux_${ASSET_ARCH}.tar.gz"
           rm -rf "dist/${TARGET}"
-          mkdir -p "$archive_dir"
+          mkdir -p "$archive_dir" "$helper_archive_dir"
 
           CGO_ENABLED=0 GOOS=linux GOARCH="$GOARCH" go build -buildvcs=false \
             -ldflags="-s -w -X main.Version=${RELEASE_VERSION} -X main.Commit=${COMMIT} -X main.BuildDate=${BUILD_DATE}" \
             -o "$archive_dir/cli-proxy-api" ./cmd/server/
+          CGO_ENABLED=0 GOOS=linux GOARCH="$GOARCH" go build -buildvcs=false \
+            -ldflags="-s -w" \
+            -o "$helper_archive_dir/sync-oauth-model-availability" ./cmd/sync_oauth_model_availability/
 
           if readelf -l "$archive_dir/cli-proxy-api" | grep -q 'Requesting program interpreter'; then
             readelf -l "$archive_dir/cli-proxy-api" >&2
@@ -443,10 +566,14 @@ jobs:
 
           cp LICENSE README.md README_CN.md config.example.yaml "$archive_dir/"
           tar -C "$archive_dir" -czf "dist/$archive_name" cli-proxy-api LICENSE README.md README_CN.md config.example.yaml
+          cp LICENSE docs/oauth-model-availability.md "$helper_archive_dir/"
+          tar -C "$helper_archive_dir" -czf "dist/$helper_archive_name" sync-oauth-model-availability LICENSE oauth-model-availability.md
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
-          path: dist/CLIProxyAPI_*
+          path: |
+            dist/CLIProxyAPI_*
+            dist/oauth-model-availability-helper_*
           if-no-files-found: error
       - name: Upload release assets
         shell: bash
@@ -455,7 +582,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          assets=(dist/CLIProxyAPI_*.tar.gz)
+          assets=(dist/CLIProxyAPI_*.tar.gz dist/oauth-model-availability-helper_*.tar.gz)
           if [[ ${#assets[@]} -eq 0 ]]; then
             printf 'expected archive assets, found %s\n' "${#assets[@]}" >&2
             printf '%s\n' "${assets[@]}" >&2
@@ -474,12 +601,14 @@ jobs:
           gh release download "$GITHUB_REF_NAME" \
             --pattern 'CLIProxyAPI_*.tar.gz' \
             --pattern 'CLIProxyAPI_*.zip' \
+            --pattern 'oauth-model-availability-helper_*.tar.gz' \
+            --pattern 'oauth-model-availability-helper_*.zip' \
             --dir "$tmp_dir" \
             --clobber
           (
             cd "$tmp_dir"
             shopt -s nullglob
-            archives=(CLIProxyAPI_*.tar.gz CLIProxyAPI_*.zip)
+            archives=(CLIProxyAPI_*.tar.gz CLIProxyAPI_*.zip oauth-model-availability-helper_*.tar.gz oauth-model-availability-helper_*.zip)
             if [[ ${#archives[@]} -eq 0 ]]; then
               echo "No release archives found"
               exit 0
@@ -498,7 +627,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TARGET: ${{ matrix.target }}
-      GOARCH: ${{ matrix.goarch }}
+      TARGET_GOARCH: ${{ matrix.goarch }}
       ASSET_ARCH: ${{ matrix.asset_arch }}
       ASSET_SUFFIX: ${{ matrix.asset_suffix }}
     strategy:
@@ -519,16 +648,14 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - name: Refresh models catalog
-        run: |
-          git fetch --depth 1 https://github.com/router-for-me/models.git main
-          git show FETCH_HEAD:models.json > internal/registry/models/models.json
-      - name: Fetch tags
-        run: git fetch --force --tags
       - uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
+      - name: Refresh models catalog
+        run: bash .github/scripts/refresh-model-catalogs.sh
+      - name: Fetch tags
+        run: git fetch --force --tags
       - uses: actions/cache@v4
         with:
           path: |
@@ -583,7 +710,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "dist/${TARGET}/bin"
-          CGO_ENABLED=0 GOOS=freebsd GOARCH="$GOARCH" go build -buildvcs=false \
+          CGO_ENABLED=0 GOOS=freebsd GOARCH="$TARGET_GOARCH" go build -buildvcs=false \
             -ldflags="-s -w -X main.Version=${RELEASE_VERSION} -X main.Commit=${COMMIT} -X main.BuildDate=${BUILD_DATE}" \
             -o "dist/${TARGET}/bin/cli-proxy-api" ./cmd/server/
       - name: Package FreeBSD archive
@@ -593,16 +720,25 @@ jobs:
 
           archive_dir="dist/${TARGET}/archive"
           archive_name="CLIProxyAPI_${RELEASE_VERSION}_freebsd_${ASSET_ARCH}${ASSET_SUFFIX}.tar.gz"
-          mkdir -p "$archive_dir"
+          helper_archive_dir="dist/${TARGET}/oauth-model-availability-helper"
+          helper_archive_name="oauth-model-availability-helper_${RELEASE_VERSION}_freebsd_${ASSET_ARCH}.tar.gz"
+          mkdir -p "$archive_dir" "$helper_archive_dir"
 
           echo "Packaging ${archive_name}"
           cp "dist/${TARGET}/bin/cli-proxy-api" "$archive_dir/cli-proxy-api"
+          CGO_ENABLED=0 GOOS=freebsd GOARCH="$TARGET_GOARCH" go build -buildvcs=false \
+            -ldflags="-s -w" \
+            -o "$helper_archive_dir/sync-oauth-model-availability" ./cmd/sync_oauth_model_availability/
           cp LICENSE README.md README_CN.md config.example.yaml "$archive_dir/"
           tar -C "$archive_dir" -czf "dist/$archive_name" cli-proxy-api LICENSE README.md README_CN.md config.example.yaml
+          cp LICENSE docs/oauth-model-availability.md "$helper_archive_dir/"
+          tar -C "$helper_archive_dir" -czf "dist/$helper_archive_name" sync-oauth-model-availability LICENSE oauth-model-availability.md
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
-          path: dist/CLIProxyAPI_*
+          path: |
+            dist/CLIProxyAPI_*
+            dist/oauth-model-availability-helper_*
           if-no-files-found: error
       - name: Upload release assets
         shell: bash
@@ -611,7 +747,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          assets=(dist/CLIProxyAPI_*.tar.gz)
+          assets=(dist/CLIProxyAPI_*.tar.gz dist/oauth-model-availability-helper_*.tar.gz)
           if [[ ${#assets[@]} -eq 0 ]]; then
             printf 'expected archive assets, found %s\n' "${#assets[@]}" >&2
             printf '%s\n' "${assets[@]}" >&2
@@ -630,12 +766,14 @@ jobs:
           gh release download "$GITHUB_REF_NAME" \
             --pattern 'CLIProxyAPI_*.tar.gz' \
             --pattern 'CLIProxyAPI_*.zip' \
+            --pattern 'oauth-model-availability-helper_*.tar.gz' \
+            --pattern 'oauth-model-availability-helper_*.zip' \
             --dir "$tmp_dir" \
             --clobber
           (
             cd "$tmp_dir"
             shopt -s nullglob
-            archives=(CLIProxyAPI_*.tar.gz CLIProxyAPI_*.zip)
+            archives=(CLIProxyAPI_*.tar.gz CLIProxyAPI_*.zip oauth-model-availability-helper_*.tar.gz oauth-model-availability-helper_*.zip)
             if [[ ${#archives[@]} -eq 0 ]]; then
               echo "No release archives found"
               exit 0
@@ -650,9 +788,10 @@ jobs:
 
   publish-checksums:
     runs-on: ubuntu-latest
-    if: always()
+    if: ${{ always() && startsWith(github.ref, 'refs/tags/v') }}
     needs:
       - build-hosted
+      - build-windows-plugin
       - build-linux-glibc
       - build-linux-no-plugin
       - build-freebsd
@@ -668,10 +807,140 @@ jobs:
           set -euo pipefail
           cd dist
           shopt -s nullglob
-          archives=(CLIProxyAPI_*.tar.gz CLIProxyAPI_*.zip)
+          archives=(CLIProxyAPI_*.tar.gz CLIProxyAPI_*.zip oauth-model-availability-helper_*.tar.gz oauth-model-availability-helper_*.zip vertex-region-models_*.zip)
           if [[ ${#archives[@]} -eq 0 ]]; then
             echo "No release archives found"
             exit 0
           fi
           sha256sum "${archives[@]}" | sort -k2 > checksums.txt
           gh release upload "$GITHUB_REF_NAME" checksums.txt --clobber
+
+  update-winget-manifest:
+    name: update WinGet manifest
+    runs-on: windows-latest
+    needs: publish-checksums
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Verify WinGet automation token
+        shell: bash
+        env:
+          WINGET_AUTOMATION_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+        run: |
+          if [ -z "$WINGET_AUTOMATION_TOKEN" ]; then
+            echo "UPSTREAM_SYNC_TOKEN is required for WinGet pull request automation." >&2
+            exit 1
+          fi
+      - name: Checkout default branch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - name: Download Windows release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh release download "$GITHUB_REF_NAME" \
+            --pattern "CLIProxyAPI_*_windows_amd64.zip" \
+            --pattern "CLIProxyAPI_*_windows_aarch64.zip" \
+            --dir dist \
+            --clobber
+          asset_count="$(find dist -maxdepth 1 -type f -name 'CLIProxyAPI_*_windows_*.zip' | wc -l)"
+          if [[ "$asset_count" -ne 2 ]]; then
+            echo "expected two Windows release assets, found $asset_count" >&2
+            exit 1
+          fi
+          (cd dist && sha256sum CLIProxyAPI_*_windows_*.zip | sort -k2 > checksums.txt)
+      - name: Generate WinGet manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/generate-winget-manifest.sh \
+            "$GITHUB_REF_NAME" \
+            "$GITHUB_REPOSITORY" \
+            dist/checksums.txt \
+            winget
+      - name: Validate WinGet manifest
+        shell: pwsh
+        run: |
+          if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+            throw "winget is not available on the Windows runner"
+          }
+          winget settings --enable LocalManifestFiles
+          if ($LASTEXITCODE -ne 0) {
+            throw "failed to enable WinGet local manifest validation with exit code $LASTEXITCODE"
+          }
+          winget validate --manifest winget
+          if ($LASTEXITCODE -ne 0) {
+            throw "winget manifest validation failed with exit code $LASTEXITCODE"
+          }
+      - name: Create WinGet manifest pull request
+        id: create-winget-pr
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+          base: ${{ github.event.repository.default_branch }}
+          branch: automation/winget-${{ github.ref_name }}
+          delete-branch: true
+          commit-message: "chore(winget): update manifest for ${{ github.ref_name }}"
+          title: "chore(winget): update manifest for ${{ github.ref_name }}"
+          body: |
+            Updates the repository-local WinGet manifest for `${{ github.ref_name }}`.
+
+            - Release: https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}
+            - Architectures: x64, arm64
+            - Validation: `winget validate --manifest winget`
+          add-paths: |
+            winget/*.yaml
+      - name: Merge WinGet manifest after checks pass
+        if: steps.create-winget-pr.outputs.pull-request-number != ''
+        timeout-minutes: 120
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.create-winget-pr.outputs.pull-request-number }}
+        run: |
+          set -euo pipefail
+
+          expected_checks=(
+            "build"
+            "build Windows plugin (amd64)"
+            "build Windows plugin (arm64)"
+            "ensure-no-translator-changes"
+          )
+          head_sha="$(gh pr view "$PR_NUMBER" --json headRefOid --jq '.headRefOid')"
+          registration_deadline=$((SECONDS + 300))
+          while true; do
+            checks="$(gh pr checks "$PR_NUMBER" --json name --jq '.[].name' || true)"
+            all_registered=true
+            for expected_check in "${expected_checks[@]}"; do
+              if ! grep -Fxq "$expected_check" <<<"$checks"; then
+                all_registered=false
+                break
+              fi
+            done
+            if [[ "$all_registered" = true ]]; then
+              break
+            fi
+
+            action_required_count="$(
+              gh api "repos/${GITHUB_REPOSITORY}/commits/${head_sha}/check-suites" \
+                --jq '[.check_suites[] | select(.conclusion == "action_required")] | length'
+            )"
+            if [[ "$action_required_count" -gt 0 ]]; then
+              echo "PR checks require manual approval; verify the automation token and Actions approval policy." >&2
+              exit 1
+            fi
+            if (( SECONDS >= registration_deadline )); then
+              echo "Timed out waiting for required PR checks to register." >&2
+              exit 1
+            fi
+            sleep 5
+          done
+
+          gh pr checks "$PR_NUMBER" --watch --fail-fast
+          gh pr merge --merge --delete-branch "$PR_NUMBER"

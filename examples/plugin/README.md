@@ -4,8 +4,7 @@ This directory contains standard dynamic library plugin examples for the CLIProx
 
 ## Layout
 
-- `simple/`- : Go-only plugin resource that calls host auth file callbacks (, , , ).
-- : full provider-native skeleton that declares every supported capability.
+- `simple/`: full provider-native skeleton that declares every supported capability.
 - `model/`: model capability only.
 - `auth/`: auth provider capability only.
 - `frontend-auth/`: frontend auth provider capability only.
@@ -15,6 +14,7 @@ This directory contains standard dynamic library plugin examples for the CLIProx
 - `request-translator/`: request translation capability only.
 - `request-normalizer/`: request normalization capability only.
 - `codex-service-tier/`: Go-only request normalizer that sets Codex `gpt-5.5` requests to the priority service tier when enabled.
+- `request-lifecycle/`: Go-only request admission example with concurrency control, active HTTP termination, and terminal callbacks.
 - `scheduler/`: Go-only scheduler that can select a configured auth ID, delegate to a built-in scheduler, or deny picks.
 - `claude-web-search-router/`: ModelRouter + executor for Claude Code built-in `web_search` (antigravity / codex / xai / Tavily). See `claude-web-search-router/README.md`.
 - `response-translator/`: response translation capability only.
@@ -26,6 +26,7 @@ This directory contains standard dynamic library plugin examples for the CLIProx
 - `host-callback/`: minimal plugin resource that demonstrates host callbacks.
 - `host-callback-auth-files/`: Go-only plugin resource that calls host auth file callbacks.
 - `host-model-callback/`: Go-only plugin resource that calls the host model execution callbacks.
+- `vertex-region-models/`: Go-only model provider that resolves each Vertex credential's models from Google's endpoint location matrix.
 
 Most standard capability examples contain `go/`, `c/`, and `rust/` subdirectories. Specialized examples may provide only the implementation language they need.
 
@@ -42,7 +43,21 @@ plugins:
       fast: false
 ```
 
+## Request Lifecycle
 
+`request-lifecycle` combines `request_interceptor` with `request_lifecycle_plugin`. It acquires a concurrency slot before auth selection, can return a custom `403` or `429` response without contacting an upstream model, and releases admitted slots from `request.complete` on success, failure, rejection, or cancellation.
+
+```yaml
+plugins:
+  configs:
+    request-lifecycle:
+      enabled: true
+      priority: 100
+      max_concurrency: 2
+      reject_keyword: "blocked"
+```
+
+See `request-lifecycle/README.md` for build instructions and lifecycle semantics.
 
 ## Host Auth Files Callback
 
@@ -99,6 +114,20 @@ make -C examples/plugin build
 ```
 
 Artifacts are written to `examples/plugin/bin`.
+
+## Vertex Region Models
+
+`vertex-region-models` binds to the native `vertex` auth provider without replacing
+its executor. Google's location matrix and the last successfully parsed cache are
+authoritative for model IDs. Native candidates only contribute metadata when an
+exact or safe `-preview` counterpart exists.
+
+Windows releases publish this plugin separately from the server archives. The
+plugin ZIPs preserve `plugins/windows/<arch>` and use the stable plugin ID
+`vertex-region-models`. Extract the matching ZIP into `~/.cli-proxy-api` and
+configure `dir: "~/.cli-proxy-api/plugins"`. The plugin remains opt-in.
+
+See `vertex-region-models/README.md` for configuration, cache, and failure behavior.
 
 ## Notes
 
