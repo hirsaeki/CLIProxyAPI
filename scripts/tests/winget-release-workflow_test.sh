@@ -4,6 +4,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 release_workflow="$repo_root/.github/workflows/release.yaml"
+retarget_workflow="$repo_root/.github/workflows/auto-retarget-main-pr-to-dev.yml"
 test_workflow="$repo_root/.github/workflows/winget-manifest-test.yml"
 
 fail() {
@@ -30,4 +31,7 @@ assert_contains 'build Windows plugin (amd64)' "$release_workflow"
 assert_contains 'build Windows plugin (arm64)' "$release_workflow"
 assert_contains 'gh pr checks "$PR_NUMBER" --watch --fail-fast' "$release_workflow"
 assert_contains 'gh pr merge --merge --delete-branch "$PR_NUMBER"' "$release_workflow"
+assert_contains 'pr.head?.repo?.full_name === `${owner}/${repo}`' "$retarget_workflow"
+assert_contains 'headRef?.startsWith("automation/winget-")' "$retarget_workflow"
+assert_contains 'skipping retarget' "$retarget_workflow"
 assert_contains 'bash scripts/tests/winget-release-workflow_test.sh' "$test_workflow"

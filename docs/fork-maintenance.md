@@ -48,6 +48,7 @@ them must stay local to the listed responsibility.
 | `internal/pluginhost/adapters.go` | Match explicit model-provider identifiers and transport candidate models |
 | `sdk/pluginapi/types.go` | Candidate-model and provider-identifier API fields |
 | `sdk/pluginabi/types.go` | Feature negotiation for native model candidates |
+| `.github/workflows/auto-retarget-main-pr-to-dev.yml` | Keep same-repository `automation/winget-*` release PRs targeting `main` |
 
 Adding another upstream-owned integration file requires documenting why an
 existing seam cannot support the feature.
@@ -114,6 +115,11 @@ The highest-value upstream contribution is a generic per-auth model candidate
 resolver seam. It should let a model provider receive the native candidates and
 return a filtered or enriched list without requiring provider-specific logic in
 `Service.registerModelsForAuthWithCache`.
+
+The upstream PR retarget workflow should also support an explicit exemption for
+trusted, same-repository release automation branches. Until then, keep the
+`automation/winget-*` guard narrow enough that an external fork cannot bypass
+the normal `main` to `dev` retarget policy.
 
 Until such a hook is accepted upstream:
 
