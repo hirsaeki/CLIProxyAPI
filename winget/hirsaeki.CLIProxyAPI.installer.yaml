@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.10.0.schema.json
 
 PackageIdentifier: hirsaeki.CLIProxyAPI
-PackageVersion: 7.2.125
+PackageVersion: 7.2.126
 InstallerType: zip
 NestedInstallerType: portable
 UpgradeBehavior: install
@@ -10,13 +10,13 @@ Installers:
   NestedInstallerFiles:
   - RelativeFilePath: cli-proxy-api.exe
     PortableCommandAlias: cli-proxy-api
-  InstallerUrl: https://github.com/hirsaeki/CLIProxyAPI/releases/download/v7.2.125/CLIProxyAPI_7.2.125_windows_amd64.zip
-  InstallerSha256: "C3EF9FCD2F11EFC9914F2E6A88ACDBD44A6DDCEE0536DA129BF2004262CA8B26"
+  InstallerUrl: https://github.com/hirsaeki/CLIProxyAPI/releases/download/v7.2.126/CLIProxyAPI_7.2.126_windows_amd64.zip
+  InstallerSha256: "94813D1E88A2E5C87A9CFA44EA554E38C85C4B628B16DD17D33338C3E421DDC4"
 - Architecture: arm64
   NestedInstallerFiles:
   - RelativeFilePath: cli-proxy-api.exe
     PortableCommandAlias: cli-proxy-api
-  InstallerUrl: https://github.com/hirsaeki/CLIProxyAPI/releases/download/v7.2.125/CLIProxyAPI_7.2.125_windows_aarch64.zip
-  InstallerSha256: "02A41C729D7F3ACBDF05E58F386150E7C2C80E92D00CD0BB0B20A8D30571E69F"
+  InstallerUrl: https://github.com/hirsaeki/CLIProxyAPI/releases/download/v7.2.126/CLIProxyAPI_7.2.126_windows_aarch64.zip
+  InstallerSha256: "047F2A6D11D17B6F5A8CE3E7B50A5F192085E6A3493910888579EB144B482BC1"
 ManifestType: installer
 ManifestVersion: 1.10.0
