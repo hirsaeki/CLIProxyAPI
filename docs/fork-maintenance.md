@@ -25,6 +25,8 @@ the repository's compatibility rules.
 
 Current model-discovery and availability files include:
 
+- `sdk/pluginabi/model_provider_native_candidates.go`
+- `internal/pluginhost/rpc_native_model_candidates_test.go`
 - `sdk/cliproxy/oauth_model_availability.go`
 - `sdk/cliproxy/oauth_model_availability_test.go`
 - `sdk/cliproxy/model_registration_extensions.go`
@@ -46,8 +48,9 @@ them must stay local to the listed responsibility.
 | `sdk/cliproxy/service_models.go` | Pass native candidates through the fork model-registration seam |
 | `sdk/cliproxy/service_executors.go` | Pass candidates to per-auth plugin model resolution |
 | `internal/pluginhost/adapters.go` | Match explicit model-provider identifiers and transport candidate models |
+| `internal/pluginhost/rpc_schema.go` | Transport host features and model-provider identifiers over RPC |
+| `internal/pluginhost/rpc_client.go` | Advertise native-candidate support and preserve model-provider identifiers |
 | `sdk/pluginapi/types.go` | Candidate-model and provider-identifier API fields |
-| `sdk/pluginabi/types.go` | Feature negotiation for native model candidates |
 | `.github/workflows/auto-retarget-main-pr-to-dev.yml` | Keep same-repository `automation/winget-*` release PRs targeting `main` |
 
 Adding another upstream-owned integration file requires documenting why an
