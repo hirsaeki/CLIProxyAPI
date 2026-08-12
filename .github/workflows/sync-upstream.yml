@@ -62,10 +62,7 @@ jobs:
           fi
 
           repo="${GITHUB_REPOSITORY}"
-          json=$(curl -fsSL \
-            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${repo}")
+          json=$(gh api "repos/${repo}")
 
           upstream=$(echo "$json" | jq -r '.parent.full_name // empty')
           upstream_branch=$(echo "$json" | jq -r '.parent.default_branch // empty')
