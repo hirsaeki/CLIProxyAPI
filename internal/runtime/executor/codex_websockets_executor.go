@@ -170,7 +170,7 @@ func codexPriorityWebsocketEligible(cfg *config.Config, auth *cliproxyauth.Auth,
 		originalPayload = opts.OriginalRequest
 	}
 	originalTranslated, body := translateCodexRequestPair(from, to, baseModel, originalPayload, req.Payload, true)
-	body, errThinking := thinking.ApplyThinking(body, req.Model, from.String(), to.String(), "codex")
+	body, errThinking := helps.ApplyRequestThinking(body, req, opts, from.String(), to.String(), "codex")
 	if errThinking != nil {
 		return false
 	}
