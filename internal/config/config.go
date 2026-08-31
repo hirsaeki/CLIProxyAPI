@@ -147,6 +147,9 @@ type Config struct {
 	// OAuthExcludedModels defines per-provider global model exclusions applied to OAuth/file-backed auth entries.
 	OAuthExcludedModels map[string][]string `yaml:"oauth-excluded-models,omitempty" json:"oauth-excluded-models,omitempty"`
 
+	// OAuthModelAvailabilityFile points to a startup-only per-credential model availability sidecar.
+	OAuthModelAvailabilityFile string `yaml:"oauth-model-availability-file,omitempty" json:"oauth-model-availability-file,omitempty"`
+
 	// OAuthModelAlias defines global model name aliases for OAuth/file-backed auth channels.
 	// These aliases affect both model listing and model routing for supported channels:
 	// vertex, aistudio, antigravity, claude, codex, kimi, xai.
@@ -154,9 +157,6 @@ type Config struct {
 	// NOTE: This does not apply to existing per-credential model alias features under:
 	// gemini-api-key, interactions-api-key, codex-api-key, xai-api-key, claude-api-key, openai-compatibility, and vertex-api-key.
 	OAuthModelAlias map[string][]OAuthModelAlias `yaml:"oauth-model-alias,omitempty" json:"oauth-model-alias,omitempty"`
-
-	// OAuthModelAvailabilityFile points to a startup-only per-credential model availability sidecar.
-	OAuthModelAvailabilityFile string `yaml:"oauth-model-availability-file,omitempty" json:"oauth-model-availability-file,omitempty"`
 
 	// Payload defines default and override rules for provider payload parameters.
 	Payload PayloadConfig `yaml:"payload" json:"payload"`
