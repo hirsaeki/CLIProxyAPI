@@ -211,7 +211,6 @@ func (b *Builder) Build() (*Service, error) {
 	if errResolvePluginsDir := b.cfg.ResolvePluginsDir(); errResolvePluginsDir != nil && b.cfg.Plugins.Enabled {
 		return nil, fmt.Errorf("cliproxy: %w", errResolvePluginsDir)
 	}
-
 	oauthModelAvailability, oauthModelAvailabilityPath, errAvailability := loadOAuthModelAvailability(b.cfg.OAuthModelAvailabilityFile, b.configPath)
 	if errAvailability != nil {
 		log.WithError(errAvailability).Error("invalid configured OAuth model availability sidecar")
@@ -286,21 +285,21 @@ func (b *Builder) Build() (*Service, error) {
 	service := &Service{
 		cfg:                        b.cfg,
 		configPath:                 b.configPath,
-		oauthModelAvailability:     oauthModelAvailability,
-		oauthModelAvailabilityPath: oauthModelAvailabilityPath,
-		tokenProvider:       tokenProvider,
-		apiKeyProvider:      apiKeyProvider,
-		watcherFactory:      watcherFactory,
-		hooks:               b.hooks,
-		authManager:         authManager,
-		accessManager:       accessManager,
-		coreManager:         coreManager,
-		cooldownStateStore:  cooldownStateStore,
-		pluginHost:          pluginHost,
-		discoveryManager:    newDiscoveryAdvertiserManager(),
-		appliedRoutingState: appliedRoutingState,
-		serverOptions:       append([]api.ServerOption(nil), b.serverOptions...),
+		tokenProvider:              tokenProvider,
+		apiKeyProvider:             apiKeyProvider,
+		watcherFactory:             watcherFactory,
+		hooks:                      b.hooks,
+		authManager:                authManager,
+		accessManager:              accessManager,
+		coreManager:                coreManager,
+		cooldownStateStore:         cooldownStateStore,
+		pluginHost:                 pluginHost,
+		discoveryManager:           newDiscoveryAdvertiserManager(),
+		appliedRoutingState:        appliedRoutingState,
+		serverOptions:              append([]api.ServerOption(nil), b.serverOptions...),
 	}
+	service.oauthModelAvailability = oauthModelAvailability
+	service.oauthModelAvailabilityPath = oauthModelAvailabilityPath
 	if b.postAuthHook != nil {
 		service.serverOptions = append(service.serverOptions, api.WithPostAuthHook(b.postAuthHook))
 	}
