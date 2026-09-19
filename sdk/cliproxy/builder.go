@@ -283,6 +283,8 @@ func (b *Builder) Build() (*Service, error) {
 	}
 
 	service := &Service{
+		oauthModelAvailability:     oauthModelAvailability,
+		oauthModelAvailabilityPath: oauthModelAvailabilityPath,
 		cfg:                        b.cfg,
 		configPath:                 b.configPath,
 		tokenProvider:              tokenProvider,
@@ -296,8 +298,6 @@ func (b *Builder) Build() (*Service, error) {
 		pluginHost:                 pluginHost,
 		appliedRoutingState:        appliedRoutingState,
 		serverOptions:              append([]api.ServerOption(nil), b.serverOptions...),
-		oauthModelAvailability:     oauthModelAvailability,
-		oauthModelAvailabilityPath: oauthModelAvailabilityPath,
 	}
 	if b.postAuthHook != nil {
 		service.serverOptions = append(service.serverOptions, api.WithPostAuthHook(b.postAuthHook))
