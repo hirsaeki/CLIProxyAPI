@@ -296,9 +296,9 @@ func (b *Builder) Build() (*Service, error) {
 		pluginHost:                 pluginHost,
 		appliedRoutingState:        appliedRoutingState,
 		serverOptions:              append([]api.ServerOption(nil), b.serverOptions...),
+		oauthModelAvailability:     oauthModelAvailability,
+		oauthModelAvailabilityPath: oauthModelAvailabilityPath,
 	}
-	service.oauthModelAvailability = oauthModelAvailability
-	service.oauthModelAvailabilityPath = oauthModelAvailabilityPath
 	if b.postAuthHook != nil {
 		service.serverOptions = append(service.serverOptions, api.WithPostAuthHook(b.postAuthHook))
 	}
