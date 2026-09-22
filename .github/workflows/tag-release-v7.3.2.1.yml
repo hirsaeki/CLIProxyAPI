@@ -1,0 +1,52 @@
+name: one-shot release tag v7.3.2.1
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/tag-release-v7.3.2.1.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  tag-and-cleanup:
+    if: ${{ github.event.head_commit.message == 'chore: trigger v7.3.2.1 release' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify automation token
+        env:
+          RELEASE_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+        run: |
+          if [ -z "$RELEASE_TOKEN" ]; then
+            echo "UPSTREAM_SYNC_TOKEN is required." >&2
+            exit 1
+          fi
+
+      - name: Checkout main
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+
+      - name: Create and push release tag
+        env:
+          TAG: v7.3.2.1
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "Tag ${TAG} already exists." >&2
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${TAG}" -m "Local Model Overlay build ${TAG}" "$GITHUB_SHA"
+          git push origin "refs/tags/${TAG}"
+
+      - name: Remove one-shot workflow
+        run: |
+          set -euo pipefail
+          git rm '.github/workflows/tag-release-v7.3.2.1.yml'
+          git commit -m 'chore: remove one-shot v7.3.2.1 release trigger'
+          git push origin HEAD:main
