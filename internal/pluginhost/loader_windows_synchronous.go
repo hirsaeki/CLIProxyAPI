@@ -35,6 +35,13 @@ func newSynchronousWindowsPluginClient(inner pluginClient) pluginClient {
 	return &synchronousWindowsPluginClient{inner: inner}
 }
 
+func (c *synchronousWindowsPluginClient) callbackInstance() *hostCallbackInstance {
+	if c == nil {
+		return nil
+	}
+	return pluginCallbackInstance(c.inner)
+}
+
 func (*synchronousWindowsPluginClient) requiresSynchronousCall() {}
 
 func (c *synchronousWindowsPluginClient) Call(ctx context.Context, method string, request []byte) ([]byte, error) {
