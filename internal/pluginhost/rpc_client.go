@@ -15,9 +15,10 @@ import (
 )
 
 type rpcPluginAdapter struct {
-	id     string
-	host   *Host
-	client pluginClient
+	id       string
+	host     *Host
+	client   pluginClient
+	instance *hostCallbackInstance
 }
 
 type rpcAuthProvider struct {
@@ -76,7 +77,7 @@ func registerRPCPlugin(ctx context.Context, host *Host, id string, client plugin
 	if resp.SchemaVersion > pluginabi.SchemaVersion {
 		return pluginapi.Plugin{}, fmt.Errorf("plugin schema version %d is not supported", resp.SchemaVersion)
 	}
-	adapter := &rpcPluginAdapter{id: id, host: host, client: client}
+	adapter := &rpcPluginAdapter{id: id, host: host, client: client, instance: pluginCallbackInstance(client)}
 	schemaVersion := resp.SchemaVersion
 	if schemaVersion == 0 {
 		// Missing schema_version is treated as the original contract.
@@ -117,6 +118,7 @@ func registerRPCPlugin(ctx context.Context, host *Host, id string, client plugin
 	}
 	if resp.Capabilities.Scheduler {
 		plugin.Capabilities.Scheduler = adapter
+		plugin.Capabilities.SchedulerAcrossPriorities = resp.Capabilities.SchedulerAcrossPriorities
 	}
 	if resp.Capabilities.ModelRouter {
 		plugin.Capabilities.ModelRouter = adapter
@@ -390,14 +392,8 @@ func marshalRPCEnvelope(result json.RawMessage) ([]byte, error) {
 	return json.Marshal(pluginabi.Envelope{OK: true, Result: result})
 }
 
-func marshalRPCError(code, message string) []byte {
-	raw, _ := json.Marshal(pluginabi.Envelope{
-		OK: false,
-		Error: &pluginabi.Error{
-			Code:    code,
-			Message: message,
-		},
-	})
+func marshalRPCError(code, message string, httpStatus ...int) []byte {
+	raw, _ := pluginabi.NewErrorEnvelope(code, message, httpStatus...)
 	return raw
 }
 
@@ -405,7 +401,7 @@ func (a *rpcPluginAdapter) openHostCallbackContext(ctx context.Context) (string,
 	if a == nil || a.host == nil {
 		return "", func() {}
 	}
-	return a.host.openCallbackContextForPlugin(ctx, a.id)
+	return a.host.openCallbackContextForPluginInstance(ctx, a.id, a.instance)
 }
 
 func (a *rpcPluginAdapter) RegisterModels(ctx context.Context, req pluginapi.ModelRegistrationRequest) (pluginapi.ModelRegistrationResponse, error) {
