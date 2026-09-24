@@ -283,19 +283,19 @@ func (b *Builder) Build() (*Service, error) {
 	}
 
 	service := &Service{
-		cfg:                        b.cfg,
-		configPath:                 b.configPath,
-		tokenProvider:              tokenProvider,
-		apiKeyProvider:             apiKeyProvider,
-		watcherFactory:             watcherFactory,
-		hooks:                      b.hooks,
-		authManager:                authManager,
-		accessManager:              accessManager,
-		coreManager:                coreManager,
-		cooldownStateStore:         cooldownStateStore,
-		pluginHost:                 pluginHost,
-		appliedRoutingState:        appliedRoutingState,
-		serverOptions:              append([]api.ServerOption(nil), b.serverOptions...),
+		cfg:                 b.cfg,
+		configPath:          b.configPath,
+		tokenProvider:       tokenProvider,
+		apiKeyProvider:      apiKeyProvider,
+		watcherFactory:      watcherFactory,
+		hooks:               b.hooks,
+		authManager:         authManager,
+		accessManager:       accessManager,
+		coreManager:         coreManager,
+		cooldownStateStore:  cooldownStateStore,
+		pluginHost:          pluginHost,
+		appliedRoutingState: appliedRoutingState,
+		serverOptions:       append([]api.ServerOption(nil), b.serverOptions...),
 	}
 	service.oauthModelAvailability = oauthModelAvailability
 	service.oauthModelAvailabilityPath = oauthModelAvailabilityPath
