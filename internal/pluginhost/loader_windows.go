@@ -70,7 +70,7 @@ type dynamicLibraryClient struct {
 }
 
 func defaultPluginLoader() pluginLoader {
-	return dynamicLibraryLoader{}
+	return synchronousWindowsPluginLoader{inner: dynamicLibraryLoader{}}
 }
 
 func (dynamicLibraryLoader) Open(file pluginFile, host *Host) (pluginClient, error) {
@@ -387,7 +387,7 @@ func windowsHostCall(hostCtx uintptr, methodPtr uintptr, requestPtr uintptr, req
 		request = append([]byte(nil), request...)
 	}
 	ctx := withHostCallbackIdentity(context.Background(), entry.pluginID, entry.instance)
-	resp, errCall := entry.host.callFromPlugin(ctx, windowsString(methodPtr), request)
+	resp, errCall := callHostFromWindowsCallback(entry, ctx, windowsString(methodPtr), request)
 	if errCall != nil {
 		resp = marshalRPCError("host_call_failed", errCall.Error(), clienterror.HTTPStatusFromError(errCall))
 	}
