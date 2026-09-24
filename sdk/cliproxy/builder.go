@@ -297,8 +297,6 @@ func (b *Builder) Build() (*Service, error) {
 		appliedRoutingState: appliedRoutingState,
 		serverOptions:       append([]api.ServerOption(nil), b.serverOptions...),
 	}
-	service.oauthModelAvailability = oauthModelAvailability
-	service.oauthModelAvailabilityPath = oauthModelAvailabilityPath
 	if b.postAuthHook != nil {
 		service.serverOptions = append(service.serverOptions, api.WithPostAuthHook(b.postAuthHook))
 	}
@@ -309,6 +307,8 @@ func (b *Builder) Build() (*Service, error) {
 			service.reloadConfigFromWatcher()
 		}),
 	)
+	service.oauthModelAvailability = oauthModelAvailability
+	service.oauthModelAvailabilityPath = oauthModelAvailabilityPath
 	return service, nil
 }
 
