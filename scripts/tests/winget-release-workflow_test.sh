@@ -19,6 +19,9 @@ assert_contains() {
 }
 
 assert_contains 'id: create-winget-pr' "$release_workflow"
+assert_contains "prepare-release:" "$release_workflow"
+assert_contains "if: \${{ startsWith(github.ref, 'refs/tags/v') }}" "$release_workflow"
+assert_contains "if: \${{ always() && needs.publish-checksums.result == 'success' && startsWith(github.ref, 'refs/tags/v') }}" "$release_workflow"
 assert_contains 'token: ${{ secrets.UPSTREAM_SYNC_TOKEN }}' "$release_workflow"
 assert_contains 'name: Merge WinGet manifest after checks pass' "$release_workflow"
 assert_contains "if: steps.create-winget-pr.outputs.pull-request-number != ''" "$release_workflow"

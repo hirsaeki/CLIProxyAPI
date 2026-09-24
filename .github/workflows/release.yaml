@@ -866,7 +866,7 @@ jobs:
     name: update WinGet manifest
     runs-on: windows-latest
     needs: publish-checksums
-    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    if: ${{ always() && needs.publish-checksums.result == 'success' && startsWith(github.ref, 'refs/tags/v') }}
     permissions:
       contents: write
       pull-requests: write
