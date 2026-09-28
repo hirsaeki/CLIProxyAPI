@@ -30,6 +30,7 @@ auths/*
 
 # Documentation
 docs/*
+!docs/management-api-v8.md
 !docs/local-model-overlay-implementation.md
 !docs/oauth-model-availability.md
 !docs/fork-maintenance.md

@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 )
 
 type matrixFetcher func(callbackID, rawURL string, headers http.Header) (pluginapi.HTTPResponse, error)
