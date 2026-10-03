@@ -23,6 +23,18 @@ Fork-owned files contain the implementation and most tests for fork features.
 They may be changed freely when the feature requires it, while still following
 the repository's compatibility rules.
 
+For new fork-owned Go files, use a feature-specific name ending in `_fork.go`
+(or `_fork_test.go` for tests) to reduce collisions with future upstream files.
+Keep any Go platform suffix last, for example `feature_fork_windows.go` or
+`feature_fork_windows_test.go`, so build selection remains correct. Other
+fork-owned files should use an explicit `fork-` prefix where practical.
+Do not rename upstream-owned integration seams or bulk-rename existing files;
+rename an existing fork-owned file when a collision occurs.
+
+The Vertex multi-region endpoint regression test is fork-owned:
+`internal/runtime/executor/gemini_vertex_endpoint_fork_test.go`. Keep it separate
+from upstream's `gemini_vertex_executor_test.go`.
+
 Current model-discovery and availability files include:
 
 - `sdk/cliproxy/oauth_model_availability.go`
@@ -132,3 +144,4 @@ Until such a hook is accepted upstream:
 If upstream accepts an equivalent hook, migrate the fork implementation to it,
 remove redundant call-site patches, retain the behavior tests, and update the
 ownership table in the same change.
+
