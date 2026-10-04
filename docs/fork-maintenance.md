@@ -54,6 +54,8 @@ them must stay local to the listed responsibility.
 | File | Allowed fork integration |
 | --- | --- |
 | `internal/config/config.go` | The `OAuthModelAvailabilityFile` configuration field |
+| `internal/registry/model_updater.go` | Apply the local Google model overlay when loading the startup catalog |
+| `internal/registry/catalog_sources.go` | Apply the same overlay before change detection and publication for refreshed catalog sources |
 | `sdk/cliproxy/service.go` | Immutable OAuth availability state fields only |
 | `sdk/cliproxy/builder.go` | Load and inject the startup availability snapshot |
 | `sdk/cliproxy/service_config.go` | Warn when a startup-only availability path changes |
@@ -67,6 +69,11 @@ them must stay local to the listed responsibility.
 
 Adding another upstream-owned integration file requires documenting why an
 existing seam cannot support the feature.
+
+Catalog refresh publication now lives in `catalog_sources.go`; the startup loader
+in `model_updater.go` is not used for remote, configured local, or embedded-source
+refreshes. Keep the overlay hook in both loaders, after validation and before
+publication. Do not restore the obsolete updater implementation to retain the hook.
 
 ## Model Registration Contract
 

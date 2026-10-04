@@ -68,13 +68,9 @@ func TestLoadModelsFromBytesAppliesLocalGoogleOverlay(t *testing.T) {
 	}
 }
 
-func TestTryRefreshModelsKeepsLocalOverlayAfterRemoteRefresh(t *testing.T) {
+func TestCatalogRefreshKeepsLocalOverlayAfterRemoteRefresh(t *testing.T) {
 	restoreModelsCatalogForTest(t)
 	restoreModelRefreshCallbackForTest(t)
-	originalURLs := append([]string(nil), modelsURLs...)
-	t.Cleanup(func() {
-		modelsURLs = originalURLs
-	})
 
 	base := testModelsCatalog()
 	base.Gemini = []*ModelInfo{{ID: "gemini-remote", DisplayName: "Remote Gemini"}}
@@ -98,22 +94,20 @@ func TestTryRefreshModelsKeepsLocalOverlayAfterRemoteRefresh(t *testing.T) {
 		_, _ = w.Write(mustMarshalCatalog(t, base))
 	}))
 	t.Cleanup(server.Close)
-	modelsURLs = []string{server.URL}
-
-	tryRefreshModels(t.Context(), "test refresh")
+	updater := &catalogUpdater{
+		fetch:   catalogFetcher(embeddedModelsJSON, []string{server.URL}, validateCatalogBytes),
+		publish: publishCatalogBytes,
+	}
+	updater.refresh(t.Context(), "", 0)
 
 	if got := lookupModelByID(GetGeminiModels(), "gemini-local-refresh"); got == nil {
 		t.Fatal("local Gemini overlay model disappeared after remote refresh")
 	}
 }
 
-func TestTryRefreshModelsDoesNotNotifyWhenRemoteMatchesCurrentOverlay(t *testing.T) {
+func TestCatalogRefreshDoesNotNotifyWhenRemoteMatchesCurrentOverlay(t *testing.T) {
 	restoreModelsCatalogForTest(t)
 	restoreModelRefreshCallbackForTest(t)
-	originalURLs := append([]string(nil), modelsURLs...)
-	t.Cleanup(func() {
-		modelsURLs = originalURLs
-	})
 
 	base := testModelsCatalog()
 	base.Gemini = []*ModelInfo{{ID: "gemini-remote", DisplayName: "Remote Gemini"}}
@@ -142,9 +136,11 @@ func TestTryRefreshModelsDoesNotNotifyWhenRemoteMatchesCurrentOverlay(t *testing
 		_, _ = w.Write(mustMarshalCatalog(t, base))
 	}))
 	t.Cleanup(server.Close)
-	modelsURLs = []string{server.URL}
-
-	tryRefreshModels(t.Context(), "test refresh")
+	updater := &catalogUpdater{
+		fetch:   catalogFetcher(embeddedModelsJSON, []string{server.URL}, validateCatalogBytes),
+		publish: publishCatalogBytes,
+	}
+	updater.refresh(t.Context(), "", 0)
 
 	if len(notified) != 0 {
 		t.Fatalf("refresh callback called with %v, want no changes", notified)

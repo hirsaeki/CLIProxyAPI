@@ -101,5 +101,7 @@ func cloneStaticModelsCatalog(data *staticModelsJSON) *staticModelsJSON {
 		Kimi:        cloneModelInfos(data.Kimi),
 		Antigravity: cloneModelInfos(data.Antigravity),
 		XAI:         cloneModelInfos(data.XAI),
+		Devin:       cloneModelInfos(data.Devin),
+		Meta:        cloneModelInfos(data.Meta),
 	}
 }
