@@ -301,6 +301,43 @@ func (h *Host) RegisterModels(ctx context.Context, modelRegistry modelRegistry) 
 	h.commitModelClients(snap, modelRegistry, registrations, nextClients, nextProviders, nextModelRegistrations)
 }
 
+// HasAuthModelProvider reports whether an active plugin declares per-auth model
+// discovery for provider. It does not fetch models or refresh credentials.
+func (h *Host) HasAuthModelProvider(provider string) bool {
+	if h == nil {
+		return false
+	}
+	provider = normalizeProviderID(provider)
+	if provider == "" {
+		return false
+	}
+	for _, record := range h.activeRecords() {
+		if h.authModelProviderMatches(record, provider) {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *Host) authModelProviderMatches(record capabilityRecord, provider string) bool {
+	caps := record.plugin.Capabilities
+	if caps.ModelProvider == nil || h.isPluginFused(record.id) || !executorScopeAllowsOAuthModels(caps) {
+		return false
+	}
+	if len(caps.ModelProviderIdentifiers) > 0 {
+		return modelProviderIdentifierMatches(caps.ModelProviderIdentifiers, provider)
+	}
+	if caps.AuthProvider != nil {
+		identifier, ok := h.callAuthProviderIdentifier(record.id, caps.AuthProvider)
+		return ok && normalizeProviderID(identifier) == provider
+	}
+	candidate := normalizeProviderID(h.modelProvider(record.id))
+	if candidate == "" && caps.Executor != nil {
+		candidate, _ = h.executorProvider(record, caps.Executor)
+	}
+	return candidate == provider
+}
+
 func (h *Host) ModelsForAuth(ctx context.Context, auth *coreauth.Auth, candidateGroups ...[]*registry.ModelInfo) AuthModelResult {
 	if h == nil || auth == nil {
 		return AuthModelResult{}
@@ -314,39 +351,10 @@ func (h *Host) ModelsForAuth(ctx context.Context, auth *coreauth.Auth, candidate
 		return AuthModelResult{}
 	}
 	for _, record := range h.activeRecords() {
-		modelProvider := record.plugin.Capabilities.ModelProvider
-		if modelProvider == nil || h.isPluginFused(record.id) {
+		if !h.authModelProviderMatches(record, providerKey) {
 			continue
 		}
-		if !executorScopeAllowsOAuthModels(record.plugin.Capabilities) {
-			continue
-		}
-		explicitProviders := record.plugin.Capabilities.ModelProviderIdentifiers
-		if len(explicitProviders) > 0 {
-			if !modelProviderIdentifierMatches(explicitProviders, providerKey) {
-				continue
-			}
-		} else if authProvider := record.plugin.Capabilities.AuthProvider; authProvider != nil {
-			identifier, okIdentifier := h.callAuthProviderIdentifier(record.id, authProvider)
-			if !okIdentifier || normalizeProviderID(identifier) != providerKey {
-				continue
-			}
-		} else {
-			recordProvider := normalizeProviderID(h.modelProvider(record.id))
-			if recordProvider == "" {
-				executor := record.plugin.Capabilities.Executor
-				if executor != nil {
-					candidate, okCandidate := h.executorProvider(record, executor)
-					if okCandidate {
-						recordProvider = candidate
-					}
-				}
-			}
-			if recordProvider != providerKey {
-				continue
-			}
-		}
-		resp, errModels := h.callModelsForAuth(ctx, record, modelProvider, auth, candidates)
+		resp, errModels := h.callModelsForAuth(ctx, record, record.plugin.Capabilities.ModelProvider, auth, candidates)
 		if errModels != nil {
 			log.Warnf("pluginhost: models for auth %s failed: %v", auth.ID, errModels)
 			return AuthModelResult{Handled: true, Err: errModels}

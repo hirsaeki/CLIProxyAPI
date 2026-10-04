@@ -119,6 +119,7 @@ func (s *Service) commitConfigUpdate(newCfg *config.Config) configCommit {
 	s.cfg = newCfg
 	s.cfgMu.Unlock()
 	s.warnOAuthModelAvailabilityConfigChange(oldCfg, newCfg)
+	s.cancelStaleAntigravityProbes("")
 	s.configSequence++
 	return configCommit{cfg: newCfg, sequence: s.configSequence}
 }
