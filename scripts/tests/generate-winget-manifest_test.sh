@@ -69,3 +69,13 @@ if "$repo_root/scripts/generate-winget-manifest.sh" \
   echo 'generator unexpectedly accepted missing release checksums' >&2
   exit 1
 fi
+
+# Re-running an equal version remains supported, but older tags cannot overwrite it.
+"$repo_root/scripts/generate-winget-manifest.sh" v7.2.60 hirsaeki/CLIProxyAPI "$checksums_file" "$manifest_dir"
+cp -R "$manifest_dir" "$tmp_dir/before"
+sed 's/7.2.60/7.2.59/g' "$checksums_file" > "$tmp_dir/older-checksums.txt"
+if "$repo_root/scripts/generate-winget-manifest.sh" v7.2.59 hirsaeki/CLIProxyAPI "$tmp_dir/older-checksums.txt" "$manifest_dir" 2>/dev/null; then
+  echo 'generator unexpectedly downgraded the manifest' >&2
+  exit 1
+fi
+diff -r "$tmp_dir/before" "$manifest_dir"

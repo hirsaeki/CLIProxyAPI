@@ -25,6 +25,16 @@ if [[ ! -f "$checksums_file" ]]; then
   exit 2
 fi
 
+# Also protect callers using older release workflows that lack the early guard.
+version_manifest="$output_dir/hirsaeki.CLIProxyAPI.yaml"
+if [[ -f "$version_manifest" ]]; then
+  eligible="$(bash "$(dirname "${BASH_SOURCE[0]}")/winget-release-is-current.sh" "$release_tag" "$version_manifest")"
+  if [[ "$eligible" != true ]]; then
+    echo "Refusing to replace a newer WinGet manifest with $release_tag" >&2
+    exit 1
+  fi
+fi
+
 package_version="${release_tag#v}"
 amd64_asset="CLIProxyAPI_${package_version}_windows_amd64.zip"
 arm64_asset="CLIProxyAPI_${package_version}_windows_aarch64.zip"

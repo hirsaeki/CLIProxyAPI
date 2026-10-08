@@ -6,6 +6,8 @@ on:
       - '.github/workflows/release.yaml'
       - '.github/workflows/winget-manifest-test.yml'
       - 'scripts/generate-winget-manifest.sh'
+      - 'scripts/winget-release-is-current.sh'
+      - 'scripts/tests/winget-release-version_test.sh'
       - 'scripts/tests/generate-winget-manifest_test.sh'
       - 'scripts/tests/winget-release-workflow_test.sh'
   workflow_dispatch:
@@ -15,10 +17,18 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Test WinGet release version guard
+        run: bash scripts/tests/winget-release-version_test.sh
       - name: Test WinGet manifest generator
         run: bash scripts/tests/generate-winget-manifest_test.sh
       - name: Test WinGet release workflow
