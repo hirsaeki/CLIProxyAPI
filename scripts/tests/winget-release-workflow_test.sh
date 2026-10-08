@@ -38,3 +38,14 @@ assert_contains 'pr.head?.repo?.full_name === `${owner}/${repo}`' "$retarget_wor
 assert_contains 'headRef?.startsWith("automation/winget-")' "$retarget_workflow"
 assert_contains 'skipping retarget' "$retarget_workflow"
 assert_contains 'bash scripts/tests/winget-release-workflow_test.sh' "$test_workflow"
+
+assert_contains 'group: winget-manifest-${{ github.repository }}' "$release_workflow"
+assert_contains 'cancel-in-progress: false' "$release_workflow"
+assert_contains 'id: winget-version' "$release_workflow"
+assert_contains "if: steps.winget-version.outputs.eligible == 'true'" "$release_workflow"
+assert_contains 'git fetch --no-tags origin "$DEFAULT_BRANCH"' "$release_workflow"
+assert_contains 'Skipping merge of stale WinGet release' "$release_workflow"
+assert_contains 'bash scripts/tests/winget-release-version_test.sh' "$test_workflow"
+assert_contains "'scripts/winget-release-is-current.sh'" "$test_workflow"
+assert_contains "'scripts/tests/winget-release-version_test.sh'" "$test_workflow"
+[[ "$(grep -Fc "if: steps.winget-version.outputs.eligible == 'true'" "$release_workflow")" -eq 4 ]] || fail 'expected all four publication steps to be gated'
