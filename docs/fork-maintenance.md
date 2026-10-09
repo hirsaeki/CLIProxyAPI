@@ -67,6 +67,14 @@ them must stay local to the listed responsibility.
 | `sdk/pluginapi/types.go` | Candidate-model and provider-identifier API fields |
 | `.github/workflows/{agents-md-guard,pr-path-guard,auto-retarget-main-pr-to-dev,docker-image}.yml` | Exclude `hirsaeki/CLIProxyAPI` from upstream-only contribution policies and Docker Hub publication |
 
+Adding another upstream-owned integration file requires documenting why an
+existing seam cannot support the feature.
+
+Catalog refresh publication now lives in `catalog_sources.go`; the startup loader
+in `model_updater.go` is not used for remote, configured local, or embedded-source
+refreshes. Keep the overlay hook in both loaders, after validation and before
+publication. Do not restore the obsolete updater implementation to retain the hook.
+
 ## Fork Branch and Workflow Policy
 
 `main` is the integration and release branch for this fork. Open maintenance and
@@ -94,13 +102,22 @@ Deleting inherited files instead can create modify/delete conflicts on a later
 upstream change. Repository-level Actions enablement is a separate owner action;
 committing these policies does not re-enable Actions.
 
-Adding another upstream-owned integration file requires documenting why an
-existing seam cannot support the feature.
+For changes confined to the three repository-local WinGet manifests, PR CI
+validates the manifests with `winget validate` and does not compile Go binaries or
+Windows plugins. The classifier uses the actual base-to-head PR diff, not the
+branch name; mixed changes, renamed source files, and unknown paths retain the
+full build path. The historical `build` and `build Windows plugin (amd64/arm64)`
+check names remain registered for release workflows stored in older tags. In the
+manifest-only path the amd64 job performs validation, and the other two names are
+lightweight Linux checks. A classification error fails those checks.
 
-Catalog refresh publication now lives in `catalog_sources.go`; the startup loader
-in `model_updater.go` is not used for remote, configured local, or embedded-source
-refreshes. Keep the overlay hook in both loaders, after validation and before
-publication. Do not restore the obsolete updater implementation to retain the hook.
+Jobs have explicit time bounds: PR builds 15 minutes, sync 10 minutes, release
+builds 15-30 minutes, and WinGet publication 30 minutes with a 20-minute check
+wait. FreeBSD package installation is limited to 5 minutes. PR concurrency can
+cancel superseded verification; release concurrency only serializes the same
+tag and does not cancel another version's publication. Keep network dependency
+steps bounded so a stalled mirror cannot consume a runner for the six-hour
+GitHub default.
 
 ## Model Registration Contract
 

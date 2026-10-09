@@ -25,7 +25,7 @@ assert_contains "if: \${{ always() && needs.publish-checksums.result == 'success
 assert_contains 'token: ${{ secrets.UPSTREAM_SYNC_TOKEN }}' "$release_workflow"
 assert_contains 'name: Merge WinGet manifest after checks pass' "$release_workflow"
 assert_contains "if: steps.create-winget-pr.outputs.pull-request-number != ''" "$release_workflow"
-assert_contains 'timeout-minutes: 120' "$release_workflow"
+assert_contains 'timeout-minutes: 20' "$release_workflow"
 assert_contains 'GH_TOKEN: ${{ github.token }}' "$release_workflow"
 assert_contains 'PR_NUMBER: ${{ steps.create-winget-pr.outputs.pull-request-number }}' "$release_workflow"
 assert_contains 'select(.conclusion == "action_required")' "$release_workflow"

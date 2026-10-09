@@ -6,30 +6,73 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: pr-test-build-${{ github.repository }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 env:
   LLVM_MINGW_VERSION: '20260616'
   LLVM_MINGW_SHA256: 'b9b68a4d276e16fa25802aaba458e4638f64b3884c290aaccdc2d87083b6ca35'
 
 jobs:
-  build:
+  changes:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      manifest_only: ${{ steps.scope.outputs.manifest_only }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Test fork workflow policy
+        run: bash scripts/tests/fork-workflow-policy_test.sh
+      - name: Test manifest-only change detection
+        run: bash scripts/tests/fork-pr-manifest-only_test.sh
+      - name: Test manifest-only workflow wiring
+        run: bash scripts/tests/fork-pr-workflow_test.sh
+      - name: Classify actual pull request changes
+        id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          manifest_only="$(bash .github/scripts/fork-pr-manifest-only.sh "$BASE_SHA" "$HEAD_SHA")"
+          echo "manifest_only=$manifest_only" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: changes
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Require successful change classification
+        if: needs.changes.result != 'success' || (needs.changes.outputs.manifest_only != 'true' && needs.changes.outputs.manifest_only != 'false')
+        run: exit 1
+      - name: Manifest-only build check
+        if: needs.changes.outputs.manifest_only == 'true'
+        run: echo 'No source changes; the Windows amd64 check validates the WinGet manifest.'
+      - name: Checkout
+        if: needs.changes.outputs.manifest_only != 'true'
+        uses: actions/checkout@v4
       - name: Set up Go
+        if: needs.changes.outputs.manifest_only != 'true'
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
       - name: Refresh models catalog
+        if: needs.changes.outputs.manifest_only != 'true'
         run: bash .github/scripts/refresh-model-catalogs.sh
       - name: Validate Windows plugin workflows
+        if: needs.changes.outputs.manifest_only != 'true'
         run: bash scripts/tests/windows-plugin-workflow_test.sh
-      - name: Validate fork workflow policy
-        run: bash scripts/tests/fork-workflow-policy_test.sh
       - name: Validate OAuth model availability release packaging
+        if: needs.changes.outputs.manifest_only != 'true'
         run: bash scripts/tests/oauth-model-availability-release_test.sh
       - name: Build
+        if: needs.changes.outputs.manifest_only != 'true'
         run: |
           go build -o test-output ./cmd/server
           go build -o sync-oauth-model-availability ./cmd/sync_oauth_model_availability
@@ -38,7 +81,12 @@ jobs:
 
   windows-plugin:
     name: build Windows plugin (${{ matrix.goarch }})
-    runs-on: ${{ matrix.runner }}
+    needs: changes
+    if: ${{ !cancelled() }}
+    # Preserve check names used by historical release workflows without rebuilding
+    # plugins for manifest-only updates. Only x64 needs Windows to run winget.
+    runs-on: ${{ needs.changes.outputs.manifest_only == 'true' && matrix.goarch == 'arm64' && 'ubuntu-latest' || matrix.runner }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -50,14 +98,37 @@ jobs:
             goarch: arm64
             cc: aarch64-w64-mingw32-clang
     steps:
+      - name: Require successful change classification
+        if: needs.changes.result != 'success' || (needs.changes.outputs.manifest_only != 'true' && needs.changes.outputs.manifest_only != 'false')
+        shell: bash
+        run: exit 1
+      - name: Manifest-only arm64 check
+        if: needs.changes.outputs.manifest_only == 'true' && matrix.goarch == 'arm64'
+        run: echo 'No source changes; WinGet validation in the x64 job covers both manifest architectures.'
       - name: Checkout
+        if: needs.changes.outputs.manifest_only != 'true' || matrix.goarch == 'amd64'
         uses: actions/checkout@v4
+      - name: Validate WinGet manifest
+        if: needs.changes.outputs.manifest_only == 'true' && matrix.goarch == 'amd64'
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+            throw 'winget is not available on the Windows runner'
+          }
+          winget settings --enable LocalManifestFiles
+          if ($LASTEXITCODE -ne 0) { throw 'failed to enable WinGet manifest validation' }
+          winget validate --manifest winget
+          if ($LASTEXITCODE -ne 0) { throw 'WinGet manifest validation failed' }
       - name: Set up Go
+        if: needs.changes.outputs.manifest_only != 'true'
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
       - name: Install LLVM-MinGW
+        if: needs.changes.outputs.manifest_only != 'true'
         shell: pwsh
         run: >-
           & .github/scripts/install-llvm-mingw.ps1
@@ -65,6 +136,7 @@ jobs:
           -Sha256 $env:LLVM_MINGW_SHA256
           -Compiler '${{ matrix.cc }}'
       - name: Build Vertex region models plugin
+        if: needs.changes.outputs.manifest_only != 'true'
         shell: bash
         env:
           GOARCH: ${{ matrix.goarch }}
@@ -88,7 +160,7 @@ jobs:
           powershell -NoProfile -Command "Compress-Archive -Path '${plugin_package_dir}/*' -DestinationPath 'dist/vertex-region-models_ci_windows_${GOARCH}.zip' -Force"
           test -f "dist/vertex-region-models_ci_windows_${GOARCH}.zip"
       - name: Test Windows Vertex plugin runtime
-        if: ${{ matrix.goarch == 'amd64' }}
+        if: ${{ needs.changes.outputs.manifest_only != 'true' && matrix.goarch == 'amd64' }}
         shell: bash
         run: |
           set -euo pipefail
