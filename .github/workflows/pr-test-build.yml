@@ -25,6 +25,8 @@ jobs:
         run: bash .github/scripts/refresh-model-catalogs.sh
       - name: Validate Windows plugin workflows
         run: bash scripts/tests/windows-plugin-workflow_test.sh
+      - name: Validate fork workflow policy
+        run: bash scripts/tests/fork-workflow-policy_test.sh
       - name: Validate OAuth model availability release packaging
         run: bash scripts/tests/oauth-model-availability-release_test.sh
       - name: Build

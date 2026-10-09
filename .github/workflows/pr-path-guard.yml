@@ -9,6 +9,8 @@ on:
 
 jobs:
   ensure-no-translator-changes:
+    # This upstream contribution policy does not apply to the maintained fork.
+    if: github.repository != 'hirsaeki/CLIProxyAPI'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

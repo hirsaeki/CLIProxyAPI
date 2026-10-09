@@ -32,11 +32,15 @@ assert_contains 'select(.conclusion == "action_required")' "$release_workflow"
 assert_contains 'Timed out waiting for required PR checks to register.' "$release_workflow"
 assert_contains 'build Windows plugin (amd64)' "$release_workflow"
 assert_contains 'build Windows plugin (arm64)' "$release_workflow"
+if grep -Fq '"ensure-no-translator-changes"' "$release_workflow"; then
+  fail 'WinGet publication must not require the disabled upstream translator policy'
+fi
 assert_contains 'gh pr checks "$PR_NUMBER" --watch --fail-fast' "$release_workflow"
 assert_contains 'gh pr merge --merge --delete-branch "$PR_NUMBER"' "$release_workflow"
 assert_contains 'pr.head?.repo?.full_name === `${owner}/${repo}`' "$retarget_workflow"
 assert_contains 'headRef?.startsWith("automation/winget-")' "$retarget_workflow"
 assert_contains 'skipping retarget' "$retarget_workflow"
+assert_contains "if: github.repository != 'hirsaeki/CLIProxyAPI' && github.actor != 'github-actions[bot]'" "$retarget_workflow"
 assert_contains 'bash scripts/tests/winget-release-workflow_test.sh' "$test_workflow"
 
 assert_contains 'group: winget-manifest-${{ github.repository }}' "$release_workflow"

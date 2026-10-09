@@ -975,7 +975,6 @@ jobs:
             "build"
             "build Windows plugin (amd64)"
             "build Windows plugin (arm64)"
-            "ensure-no-translator-changes"
           )
           head_sha="$(gh pr view "$PR_NUMBER" --json headRefOid --jq '.headRefOid')"
           registration_deadline=$((SECONDS + 300))

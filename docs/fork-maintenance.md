@@ -65,7 +65,34 @@ them must stay local to the listed responsibility.
 | `internal/pluginhost/rpc_schema.go` | Transport host features and model-provider identifiers over RPC |
 | `internal/pluginhost/rpc_client.go` | Advertise native-candidate support and preserve model-provider identifiers |
 | `sdk/pluginapi/types.go` | Candidate-model and provider-identifier API fields |
-| `.github/workflows/auto-retarget-main-pr-to-dev.yml` | Keep same-repository `automation/winget-*` release PRs targeting `main` |
+| `.github/workflows/{agents-md-guard,pr-path-guard,auto-retarget-main-pr-to-dev,docker-image}.yml` | Exclude `hirsaeki/CLIProxyAPI` from upstream-only contribution policies and Docker Hub publication |
+
+## Fork Branch and Workflow Policy
+
+`main` is the integration and release branch for this fork. Open maintenance and
+feature pull requests against `main`; do not automatically retarget them to `dev`.
+The existing `dev` branch is retained for historical work, not as a required
+promotion stage. Do not merge its unrelated history into `main` to land a fix.
+
+The inherited Docker Hub publisher, AGENTS.md auto-close rule, translator-path
+rejection rule, and main-to-dev retarget rule do not run jobs in
+`hirsaeki/CLIProxyAPI`. Keep their files and job identifiers with explicit fork
+exclusions to minimize upstream merge conflicts and preserve historical check
+names. These exclusions do not change upstream behavior in other repositories.
+They are not a replacement for reviewing sensitive source or instruction changes.
+
+Keep the four-hour upstream sync, fork GHCR publisher, release builds (including
+plugins and the optional OAuth helper), WinGet validation, and on-demand repository
+bundle. WinGet publication waits for build validation, not the upstream
+translator contribution policy. Preserve its version guard before generation,
+generator-level downgrade protection, pre-merge version recheck, and serialized
+publication job.
+
+Review workflow changes during every upstream merge. Retain these exclusions and
+check for newly introduced upstream workflows before enabling them in the fork.
+Deleting inherited files instead can create modify/delete conflicts on a later
+upstream change. Repository-level Actions enablement is a separate owner action;
+committing these policies does not re-enable Actions.
 
 Adding another upstream-owned integration file requires documenting why an
 existing seam cannot support the feature.
@@ -138,10 +165,10 @@ resolver seam. It should let a model provider receive the native candidates and
 return a filtered or enriched list without requiring provider-specific logic in
 `Service.registerModelsForAuthWithCache`.
 
-The upstream PR retarget workflow should also support an explicit exemption for
-trusted, same-repository release automation branches. Until then, keep the
-`automation/winget-*` guard narrow enough that an external fork cannot bypass
-the normal `main` to `dev` retarget policy.
+The upstream contribution-policy workflows could support a configurable opt-out
+for maintained forks. Until then, keep the repository-specific job exclusions
+small. The existing same-repository `automation/winget-*` exemption inside the
+retarget script remains for compatibility outside this fork.
 
 Until such a hook is accepted upstream:
 
