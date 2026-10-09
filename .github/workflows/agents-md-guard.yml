@@ -14,6 +14,8 @@ permissions:
 
 jobs:
   close-when-agents-md-changed:
+    # This upstream contribution policy does not apply to the maintained fork.
+    if: github.repository != 'hirsaeki/CLIProxyAPI'
     runs-on: ubuntu-latest
     steps:
       - name: Detect AGENTS.md changes and close PR

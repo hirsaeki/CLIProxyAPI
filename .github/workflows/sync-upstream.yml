@@ -19,6 +19,7 @@ env:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Verify sync token
@@ -31,9 +32,12 @@ jobs:
           fi
 
       - name: Install jq
+        timeout-minutes: 3
         run: |
-          sudo apt-get update
-          sudo apt-get install -y jq
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+            sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y jq
+          fi
 
       - name: Checkout
         uses: actions/checkout@v4

@@ -16,7 +16,8 @@ permissions:
 
 jobs:
   retarget:
-    if: github.actor != 'github-actions[bot]'
+    # Fork pull requests target main; retain upstream behavior elsewhere.
+    if: github.repository != 'hirsaeki/CLIProxyAPI' && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: Retarget PR base to dev

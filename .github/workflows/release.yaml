@@ -9,6 +9,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   GH_REPO: ${{ github.repository }}
   GO_VERSION: '1.26.4'
@@ -19,6 +23,7 @@ jobs:
   prepare-release:
     if: ${{ startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
         with:
@@ -115,6 +120,7 @@ jobs:
     name: build ${{ matrix.target }}
     needs: prepare-release
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -272,6 +278,7 @@ jobs:
     name: build Windows plugin ${{ matrix.goarch }}
     needs: prepare-release
     runs-on: windows-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -360,6 +367,7 @@ jobs:
     name: build linux-${{ matrix.goarch }} glibc
     needs: prepare-release
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -495,6 +503,7 @@ jobs:
     name: build linux-${{ matrix.goarch }} no-plugin
     needs: prepare-release
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -625,6 +634,7 @@ jobs:
     name: build ${{ matrix.target }}
     needs: prepare-release
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
       TARGET: ${{ matrix.target }}
       TARGET_GOARCH: ${{ matrix.goarch }}
@@ -685,10 +695,11 @@ jobs:
           rm -rf "dist/${TARGET}"
       - name: Install FreeBSD cross-build dependencies
         if: ${{ matrix.cgo_enabled }}
+        timeout-minutes: 5
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y clang lld curl
+          sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y clang lld curl
       - name: Build FreeBSD binary with CGO
         if: ${{ matrix.cgo_enabled }}
         shell: bash
@@ -724,7 +735,7 @@ jobs:
           downloaded=false
           for url in "${urls[@]}"; do
             echo "Attempting to download FreeBSD base.txz from ${url}..."
-            if curl -fsSL --retry 3 --retry-connrefused "$url" -o /tmp/base.txz; then
+            if curl -fsSL --connect-timeout 15 --max-time 120 --retry 3 --retry-max-time 300 --retry-connrefused "$url" -o /tmp/base.txz; then
               echo "Successfully downloaded FreeBSD base.txz from ${url}"
               downloaded=true
               break
@@ -835,6 +846,7 @@ jobs:
 
   publish-checksums:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     if: ${{ always() && startsWith(github.ref, 'refs/tags/v') }}
     needs:
       - build-hosted
@@ -865,6 +877,7 @@ jobs:
   update-winget-manifest:
     name: update WinGet manifest
     runs-on: windows-latest
+    timeout-minutes: 30
     needs: publish-checksums
     if: ${{ always() && needs.publish-checksums.result == 'success' && startsWith(github.ref, 'refs/tags/v') }}
     concurrency:
@@ -962,7 +975,7 @@ jobs:
             winget/*.yaml
       - name: Merge WinGet manifest after checks pass
         if: steps.create-winget-pr.outputs.pull-request-number != ''
-        timeout-minutes: 120
+        timeout-minutes: 20
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -975,7 +988,6 @@ jobs:
             "build"
             "build Windows plugin (amd64)"
             "build Windows plugin (arm64)"
-            "ensure-no-translator-changes"
           )
           head_sha="$(gh pr view "$PR_NUMBER" --json headRefOid --jq '.headRefOid')"
           registration_deadline=$((SECONDS + 300))

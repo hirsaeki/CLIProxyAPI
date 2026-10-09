@@ -24,6 +24,7 @@ jobs:
   build:
     name: build ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -86,6 +87,7 @@ jobs:
   manifest:
     name: publish multi-arch manifest
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     needs: build
     steps:
       - name: Set up Docker Buildx
