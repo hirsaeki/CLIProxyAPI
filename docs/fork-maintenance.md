@@ -154,6 +154,21 @@ The scheduled sync workflow intentionally fails on conflicts. Resolve the merge
 locally, test it, and push the resulting merge commit; do not weaken the workflow
 to hide conflicts.
 
+The owner can also open a new Issue in `hirsaeki/CLIProxyAPI` with the exact,
+case-sensitive title `[sync-upstream]` to request the same sync. Only Issues
+authored and opened by `hirsaeki` are accepted; edits, reopened Issues, comments,
+and other users cannot request a sync. The body is ignored, including any refs,
+tags, repository names, or commands. Issue-triggered sync checks out trusted
+`main` and uses the existing upstream detection and release behavior. Rerunning
+an Issue-triggered job also requires `hirsaeki` as the triggering actor.
+
+The read-only Issue authorization job has no checkout or sync token. Only an
+authorized sync enters the shared concurrency group, so rejected Issues cannot
+replace a pending scheduled, manual, or owner-requested sync. The four-hour cron
+and manual dispatch remain available; this alternate entry point does not fix
+or diagnose missed scheduled runs. Validate the gate without opening a real
+trigger Issue with `python3 scripts/tests/fork-sync-issue_test.py`.
+
 ## Required Regression Checks
 
 For model availability or plugin candidate changes, verify at least:

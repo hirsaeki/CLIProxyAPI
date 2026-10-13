@@ -4,20 +4,76 @@ on:
   schedule:
     - cron: "0 */4 * * *"
   workflow_dispatch:
+  issues:
+    types: [opened]
 
 permissions:
   contents: read
-
-concurrency:
-  group: sync-upstream-${{ github.repository }}
-  cancel-in-progress: false
 
 env:
   # Optional: set "owner/repo" to override automatic upstream detection.
   UPSTREAM: ""
 
 jobs:
+  authorize_issue:
+    # This job has no checkout or sync token. Expressions ignore string case,
+    # so the event JSON is checked again with exact equality before syncing.
+    if: >-
+      github.event_name == 'issues' &&
+      github.repository == 'hirsaeki/CLIProxyAPI' &&
+      github.event.action == 'opened' &&
+      github.event.issue.user.login == 'hirsaeki' &&
+      github.event.sender.login == 'hirsaeki' &&
+      github.actor == 'hirsaeki' &&
+      github.triggering_actor == 'hirsaeki' &&
+      github.event.issue.title == '[sync-upstream]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      allowed: ${{ steps.authorize.outputs.allowed }}
+    steps:
+      - name: Authorize exact owner Issue
+        id: authorize
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+
+          with open(os.environ['GITHUB_EVENT_PATH'], encoding='utf-8') as source:
+              event = json.load(source)
+          allowed = (
+              os.environ['GITHUB_EVENT_NAME'] == 'issues'
+              and os.environ['GITHUB_REPOSITORY'] == 'hirsaeki/CLIProxyAPI'
+              and event.get('repository', {}).get('full_name') == 'hirsaeki/CLIProxyAPI'
+              and event.get('action') == 'opened'
+              and event.get('issue', {}).get('title') == '[sync-upstream]'
+              and event.get('issue', {}).get('user', {}).get('login') == 'hirsaeki'
+              and event.get('sender', {}).get('login') == 'hirsaeki'
+              and os.environ['GITHUB_ACTOR'] == 'hirsaeki'
+              and os.environ['GITHUB_TRIGGERING_ACTOR'] == 'hirsaeki'
+          )
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              output.write(f'allowed={str(allowed).lower()}\n')
+          PY
+
   sync:
+    needs: authorize_issue
+    # A skipped Issue gate must not skip scheduled/manual sync. Recheck the
+    # rerun actor here because a rerun can reuse a previously successful gate.
+    if: >-
+      ${{ !cancelled() && (
+        github.event_name == 'schedule' ||
+        github.event_name == 'workflow_dispatch' ||
+        (github.event_name == 'issues' &&
+         needs.authorize_issue.result == 'success' &&
+         needs.authorize_issue.outputs.allowed == 'true' &&
+         github.actor == 'hirsaeki' &&
+         github.triggering_actor == 'hirsaeki')
+      ) }}
+    # Rejected public Issues never enter the shared sync queue.
+    concurrency:
+      group: sync-upstream-${{ github.repository }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -42,6 +98,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event_name == 'issues' && 'refs/heads/main' || '' }}
           fetch-depth: 0
           token: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
 

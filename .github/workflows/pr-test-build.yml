@@ -27,6 +27,8 @@ jobs:
           fetch-depth: 0
       - name: Test fork workflow policy
         run: bash scripts/tests/fork-workflow-policy_test.sh
+      - name: Test fork Issue sync authorization
+        run: python3 scripts/tests/fork-sync-issue_test.py
       - name: Test manifest-only change detection
         run: bash scripts/tests/fork-pr-manifest-only_test.sh
       - name: Test manifest-only workflow wiring
