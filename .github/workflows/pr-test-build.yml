@@ -73,6 +73,18 @@ jobs:
       - name: Validate OAuth model availability release packaging
         if: needs.changes.outputs.manifest_only != 'true'
         run: bash scripts/tests/oauth-model-availability-release_test.sh
+      - name: Test fork model registration and config snapshot races
+        if: needs.changes.outputs.manifest_only != 'true'
+        run: |
+          test -z "$(gofmt -l sdk/cliproxy/model_registration_config_snapshot_fork_test.go \
+            sdk/cliproxy/model_registration_extensions.go sdk/cliproxy/service_executors.go \
+            sdk/cliproxy/service_models.go)"
+          go test -race ./sdk/cliproxy ./sdk/pluginabi ./internal/pluginhost \
+            -run 'Fork$|OAuth.*Availability|AvailabilityFallback|TestForkConfigCommit|Native.*Candidates|CandidateModels|ModelProvider|PluginDiscovery|AntigravityCachedRegistration|Issue6583|Issue6559' \
+            -count=1 -timeout=5m
+      - name: Test Go packages
+        if: needs.changes.outputs.manifest_only != 'true'
+        run: go test ./... -timeout=5m
       - name: Build
         if: needs.changes.outputs.manifest_only != 'true'
         run: |

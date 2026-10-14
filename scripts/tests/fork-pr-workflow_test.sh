@@ -36,7 +36,7 @@ awk -v condition="        if: needs.changes.outputs.manifest_only != 'true'" '
   /uses: actions\/setup-go@v5/ && previous != condition { exit 1 }
   { previous=$0 }
 ' "$workflow" || { echo 'Go setup must be skipped for manifest-only changes' >&2; exit 1; }
-for step in 'Build' 'Refresh models catalog' 'Install LLVM-MinGW' 'Build Vertex region models plugin'; do
+for step in 'Build' 'Refresh models catalog' 'Install LLVM-MinGW' 'Build Vertex region models plugin' 'Test fork model registration and config snapshot races' 'Test Go packages'; do
   require_step_condition "$step" "needs.changes.outputs.manifest_only != 'true'"
 done
 require_step_condition 'Validate WinGet manifest' "needs.changes.outputs.manifest_only == 'true' && matrix.goarch == 'amd64'"

@@ -131,6 +131,13 @@ The model registration order is intentional:
 6. Do not append static plugin models when an authoritative OAuth availability
    entry exists.
 
+Keep the caller's immutable configuration snapshot through plugin discovery,
+including native candidates and cached Antigravity catalogs. The per-auth
+`WithConfig` registration path must not reacquire current configuration for
+exclusions, aliases, OAuth settings, or forced prefixes midway through a batch.
+`model_registration_config_snapshot_fork_test.go` covers these integration seams
+with different captured and current configurations.
+
 Providers without a native catalog must still allow plugin model discovery with
 an empty candidate list. OAuth availability is startup-only: a configured
 missing or invalid file prevents startup, and a path change requires restart.
