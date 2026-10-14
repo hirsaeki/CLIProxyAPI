@@ -105,6 +105,9 @@ type Auth struct {
 	// Runtime carries non-serialisable data used during execution (in-memory only).
 	Runtime any `json:"-"`
 
+	// sourceFileSnapshot is immutable provenance for unversioned watcher updates.
+	sourceFileSnapshot *sourceFileSnapshot
+
 	// RejectedAccessToken tracks the access token rejected by upstream 401 until a refresh succeeds.
 	RejectedAccessToken string `json:"-"`
 

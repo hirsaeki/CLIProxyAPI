@@ -97,6 +97,10 @@ func (m *Manager) Register(ctx context.Context, auth *Auth) (*Auth, error) {
 		return nil, errMutation
 	}
 	defer releaseMutation()
+	if !auth.sourceFileSnapshotCurrent() {
+		current, _ := m.GetByID(auth.ID)
+		return current, nil
+	}
 	now := time.Now()
 	if auth.Generation == 0 {
 		auth.Generation = 1
@@ -236,6 +240,10 @@ func (m *Manager) finishAuthUpdate(ctx context.Context, committed *Auth, persist
 func (m *Manager) updateInternalLocked(ctx context.Context, base, auth *Auth, mode updateAuthMode) (committedAuth *Auth, committed bool, persistCooldown bool, err error) {
 	if auth == nil || auth.ID == "" {
 		return nil, false, false, nil
+	}
+	if !auth.sourceFileSnapshotCurrent() {
+		current, _ := m.GetByID(auth.ID)
+		return current, false, false, nil
 	}
 	NormalizeCredentialMetadata(auth.Metadata)
 	if errWeight := ValidateAuthWeight(auth); errWeight != nil {

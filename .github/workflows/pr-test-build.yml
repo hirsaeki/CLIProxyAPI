@@ -74,6 +74,10 @@ jobs:
         if: needs.changes.outputs.manifest_only != 'true'
         run: |
           gofmt -d sdk/cliproxy/persisted_auth_ordering_fork_test.go \
+            sdk/cliproxy/auth/types.go sdk/cliproxy/auth/conductor_lifecycle.go \
+            sdk/cliproxy/auth/source_file_snapshot_fork.go sdk/cliproxy/auth/source_file_snapshot_fork_test.go \
+            sdk/cliproxy/service_auth.go internal/watcher/synthesizer/file.go \
+            internal/watcher/synthesizer/source_file_snapshot_fork_test.go \
             sdk/cliproxy/model_registration_config_snapshot_fork_test.go \
             sdk/cliproxy/model_registration_publication_fork_test.go \
             sdk/cliproxy/model_registration_extensions.go sdk/cliproxy/service_executors.go \
@@ -94,6 +98,8 @@ jobs:
           go test -race ./sdk/cliproxy \
             -run '^Test(ModelRegistration|PluginRegistration)' -count=20 -timeout=5m
           go test -race ./sdk/pluginabi -count=1 -timeout=5m
+          go test -race ./sdk/cliproxy ./sdk/cliproxy/auth ./internal/watcher/synthesizer \
+            -run 'SourceFileSnapshot.*Fork$|PersistedAuthSurvivesPreHookWatcherSnapshotFork$' -count=20 -timeout=5m
           go test -race ./sdk/cliproxy \
             -run '^TestPutOpenAICompatConcurrentWithAuthFieldsPatch_Issue6559$' -count=10 -timeout=5m
           go test -race ./internal/runtime/executor \

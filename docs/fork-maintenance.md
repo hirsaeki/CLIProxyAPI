@@ -57,6 +57,9 @@ them must stay local to the listed responsibility.
 | `internal/registry/model_updater.go` | Apply the local Google model overlay when loading the startup catalog |
 | `internal/registry/catalog_sources.go` | Apply the same overlay before change detection and publication for refreshed catalog sources |
 | `sdk/cliproxy/service.go` | Immutable OAuth availability state fields only |
+| `sdk/cliproxy/auth/types.go`, `conductor_lifecycle.go` | Runtime-only file snapshot provenance and validation inside the existing per-auth mutation gate |
+| `internal/watcher/synthesizer/file.go` | Attach source provenance to single-file and full-scan auth snapshots, including plugin outputs |
+| `sdk/cliproxy/service_auth.go` | Use the committed/current auth returned by manager reconciliation |
 | `sdk/cliproxy/builder.go` | Load and inject the startup availability snapshot |
 | `sdk/cliproxy/service_config.go` | Warn when a startup-only availability path changes |
 | `sdk/cliproxy/service_models.go` | Pass native candidates through the fork model-registration seam |
@@ -290,3 +293,27 @@ observer through a channel before retaining its original atomic assertion. The
 incomplete WebSocket frame can arrive before that observer runs; missing
 cancellation still fails under a bounded timeout. CI repeats this unchanged
 production behavior twenty times with the race detector.
+
+### Persisted auth and queued file snapshots
+
+An unversioned file snapshot can be consumed after a newer management save but
+before its post-persist hook. Previously the old snapshot replaced the manager
+and advanced its generation, causing that hook to reject the saved state.
+`persisted_auth_ordering_fork_test.go` reproduces the completed ordering without
+sleeps; the original concurrent Issue6559 assertions remain unchanged.
+
+The fork attaches immutable runtime-only source-content provenance at synthesis.
+The existing per-auth mutation gate validates it before accepting an unversioned
+snapshot. Mismatched, missing, or unreadable sources preserve the current auth
+without persistence, generation changes, or update hooks. Versioned updates and
+registration/publication fences retain their existing semantics. Service model
+registration uses the manager's returned snapshot, including a rejected update.
+The generic manager and synthesis seams are required because service hooks cannot
+atomically validate a source against managed persistence. Remove these seams when
+upstream implements an equivalent guard.
+
+No source bytes or digest are logged or serialized. File I/O stays outside the
+manager mutex, and plugin parsing never runs inside the mutation gate. The guard
+serializes manager-mediated changes for the same auth; it does not lock out
+arbitrary external file writers. Regressions cover real save ordering, accounting,
+clone/serialization behavior, and full-scan/single-file/plugin synthesis paths.

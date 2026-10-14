@@ -424,6 +424,7 @@ func (s *Service) prepareCoreAuthForModelRegistration(ctx context.Context, auth 
 	// immediately for API calls, rather than waiting for model registration to complete.
 	op := "register"
 	var err error
+	var committed *coreauth.Auth
 	if existing, ok := s.coreManager.GetByID(auth.ID); ok {
 		if isStaleCoreAuth(existing, auth) {
 			log.Debugf("skipping stale auth update for %s: incoming gen=%d, existing gen=%d", auth.ID, auth.Generation, existing.Generation)
@@ -446,9 +447,9 @@ func (s *Service) prepareCoreAuthForModelRegistration(ctx context.Context, auth 
 			}
 		}
 		op = "update"
-		_, err = s.coreManager.Update(ctx, auth)
+		committed, err = s.coreManager.Update(ctx, auth)
 	} else {
-		_, err = s.coreManager.Register(ctx, auth)
+		committed, err = s.coreManager.Register(ctx, auth)
 	}
 	if err != nil {
 		log.Errorf("failed to %s auth %s: %v", op, auth.ID, err)
@@ -458,6 +459,12 @@ func (s *Service) prepareCoreAuthForModelRegistration(ctx context.Context, auth 
 			return nil
 		}
 		auth = current
+	} else {
+		// A rejected file snapshot returns the current auth without committing.
+		auth = committed
+		if auth == nil {
+			return nil
+		}
 	}
 	s.cancelStaleAntigravityProbes(auth.ID)
 	return auth
