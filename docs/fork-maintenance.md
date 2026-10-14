@@ -284,3 +284,9 @@ counting. JSON-shaped conversation data and native response
 candidate; no general schema satisfiability solver is introduced. The existing
 approximate `allOf`/conditional reductions are outside this narrow union-rewrite
 fix and may still simplify constraints before union cleaning.
+
+The inherited HTTP-interrupt test now waits for its fixture's cancellation
+observer through a channel before retaining its original atomic assertion. The
+incomplete WebSocket frame can arrive before that observer runs; missing
+cancellation still fails under a bounded timeout. CI repeats this unchanged
+production behavior twenty times with the race detector.

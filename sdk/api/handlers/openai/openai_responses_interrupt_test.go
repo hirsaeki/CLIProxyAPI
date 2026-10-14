@@ -270,8 +270,9 @@ func (e *homeInterruptExecutor) InterruptExecutionSession(ctx context.Context, s
 }
 
 type blockingHTTPInterruptExecutor struct {
-	calls    atomic.Int32
-	canceled atomic.Bool
+	calls        atomic.Int32
+	canceled     atomic.Bool
+	canceledDone chan struct{}
 }
 
 func (*blockingHTTPInterruptExecutor) Identifier() string { return "codex" }
@@ -293,6 +294,7 @@ func (e *blockingHTTPInterruptExecutor) ExecuteStream(ctx context.Context, _ *co
 		chunks <- coreexecutor.StreamChunk{Payload: []byte(`{"type":"response.created","response":{"id":"r-http"}}`)}
 		<-ctx.Done()
 		e.canceled.Store(true)
+		close(e.canceledDone)
 	}()
 	return &coreexecutor.StreamResult{Chunks: chunks}, nil
 }
@@ -317,7 +319,7 @@ func (*blockingHTTPInterruptExecutor) InterruptExecutionSession(context.Context,
 // cancels an HTTP upstream turn and lets the same socket continue.
 func TestResponsesInterruptStopsHTTPUpstream(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	executor := &blockingHTTPInterruptExecutor{}
+	executor := &blockingHTTPInterruptExecutor{canceledDone: make(chan struct{})}
 	manager := coreauth.NewManager(nil, nil, nil)
 	manager.SetConfig(&config.Config{})
 	manager.RegisterExecutor(executor)
@@ -371,6 +373,13 @@ func TestResponsesInterruptStopsHTTPUpstream(t *testing.T) {
 	}
 	if got := gjson.GetBytes(interrupted, "response.incomplete_details.reason").String(); got != "interrupted" {
 		t.Fatalf("interrupt reason = %q, payload %s", got, interrupted)
+	}
+	// Receiving the incomplete frame does not synchronize with the executor's
+	// cancellation observer. Wait for that observer without weakening the check.
+	select {
+	case <-executor.canceledDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for HTTP upstream cancellation")
 	}
 	if !executor.canceled.Load() {
 		t.Fatal("http upstream was not canceled")

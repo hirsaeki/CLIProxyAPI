@@ -83,6 +83,7 @@ jobs:
             internal/runtime/executor/antigravity_executor_interactions_test.go \
             internal/runtime/executor/websocket_session_target_test.go \
             sdk/api/handlers/openai/openai_responses_websocket_forward.go \
+            sdk/api/handlers/openai/openai_responses_interrupt_test.go \
             sdk/api/handlers/openai/openai_responses_interrupt_lifecycle_fork_test.go > "$RUNNER_TEMP/fork-gofmt.diff"
           cat "$RUNNER_TEMP/fork-gofmt.diff"
           test ! -s "$RUNNER_TEMP/fork-gofmt.diff"
@@ -98,7 +99,7 @@ jobs:
             -run '^(TestAIStudioTranslateRequestNormalizesThinkingLevel|TestAntigravityExecutorExecuteStreamTranslatesInteractionsRequest|TestWebsocketRetryBindFailureClearsActiveSessionState)$' \
             -count=20 -timeout=5m
           go test -race ./sdk/api/handlers/openai \
-            -run '^(TestResponsesTerminalFrameEndsLocalInterruptBeforeStreamCloseFork|TestResponsesLateInterruptDoesNotPoisonNextCreate|TestResponsesInterruptDiagnosticsAreSanitized)$' \
+            -run '^(TestResponsesTerminalFrameEndsLocalInterruptBeforeStreamCloseFork|TestResponsesLateInterruptDoesNotPoisonNextCreate|TestResponsesInterruptDiagnosticsAreSanitized|TestResponsesInterruptStopsHTTPUpstream)$' \
             -count=20 -timeout=5m
       - name: Test unsatisfiable schema regressions
         if: needs.changes.outputs.manifest_only != 'true'
