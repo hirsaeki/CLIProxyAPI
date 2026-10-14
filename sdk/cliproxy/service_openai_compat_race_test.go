@@ -179,6 +179,18 @@ func TestPutOpenAICompatConcurrentWithAuthFieldsPatch_Issue6559(t *testing.T) {
 
 	finalPrefixModel := fmt.Sprintf("pfx-%d/gpt-6-astra", iterations-1)
 	if !reg.ClientSupportsModel(authID, finalPrefixModel) {
+		current, _ := service.coreManager.GetByID(authID)
+		if current != nil {
+			t.Logf("diagnostic runtime prefix=%q generation=%d registration_epoch=%d", current.Prefix, current.Generation, current.RegistrationEpoch)
+		}
+		modelIDs := make([]string, 0)
+		for _, model := range reg.GetModelsForClient(authID) {
+			modelIDs = append(modelIDs, model.ID)
+		}
+		service.authUpdateMu.Lock()
+		revision := service.authRevisions[authID]
+		service.authUpdateMu.Unlock()
+		t.Logf("diagnostic models=%v processed_revision=%d registration_pending=%t", modelIDs, revision, service.authRegistrationWaitCh(authID) != nil)
 		t.Fatalf("expected auth %s to support final prefixed model %q", authID, finalPrefixModel)
 	}
 

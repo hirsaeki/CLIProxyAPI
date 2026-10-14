@@ -73,7 +73,8 @@ jobs:
       - name: Test fork model registration and config snapshot races
         if: needs.changes.outputs.manifest_only != 'true'
         run: |
-          gofmt -d sdk/cliproxy/model_registration_config_snapshot_fork_test.go \
+          gofmt -d sdk/cliproxy/persisted_auth_ordering_fork_test.go \
+            sdk/cliproxy/model_registration_config_snapshot_fork_test.go \
             sdk/cliproxy/model_registration_publication_fork_test.go \
             sdk/cliproxy/model_registration_extensions.go sdk/cliproxy/service_executors.go \
             sdk/cliproxy/service_models.go internal/watcher/config_reload.go \
