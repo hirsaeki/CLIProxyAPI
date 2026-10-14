@@ -76,14 +76,18 @@ jobs:
       - name: Test fork model registration and config snapshot races
         if: needs.changes.outputs.manifest_only != 'true'
         run: |
-          test -z "$(gofmt -l sdk/cliproxy/model_registration_config_snapshot_fork_test.go \
+          gofmt -d sdk/cliproxy/model_registration_config_snapshot_fork_test.go \
             sdk/cliproxy/model_registration_extensions.go sdk/cliproxy/service_executors.go \
             sdk/cliproxy/service_models.go internal/watcher/config_reload.go \
             internal/watcher/config_reload_hash_fork_test.go \
             internal/runtime/executor/thinking_level_fixture_fork_test.go \
             internal/runtime/executor/aistudio_executor_test.go \
             internal/runtime/executor/antigravity_executor_interactions_test.go \
-            internal/runtime/executor/websocket_session_target_test.go)"
+            internal/runtime/executor/websocket_session_target_test.go \
+            sdk/api/handlers/openai/openai_responses_websocket_forward.go \
+            sdk/api/handlers/openai/openai_responses_interrupt_lifecycle_fork_test.go > "$RUNNER_TEMP/fork-gofmt.diff"
+          cat "$RUNNER_TEMP/fork-gofmt.diff"
+          test ! -s "$RUNNER_TEMP/fork-gofmt.diff"
           go test -race ./sdk/cliproxy ./internal/watcher ./internal/pluginhost \
             -run 'Fork$|OAuth.*Availability|AvailabilityFallback|TestForkConfigCommit|Native.*Candidates|CandidateModels|ModelProvider|PluginDiscovery|AntigravityCachedRegistration|Issue6583|Issue6559' \
             -count=1 -timeout=5m
@@ -92,6 +96,9 @@ jobs:
             -run '^TestPutOpenAICompatConcurrentWithAuthFieldsPatch_Issue6559$' -count=10 -timeout=5m
           go test -race ./internal/runtime/executor \
             -run '^(TestAIStudioTranslateRequestNormalizesThinkingLevel|TestAntigravityExecutorExecuteStreamTranslatesInteractionsRequest|TestWebsocketRetryBindFailureClearsActiveSessionState)$' \
+            -count=20 -timeout=5m
+          go test -race ./sdk/api/handlers/openai \
+            -run '^(TestResponsesTerminalFrameEndsLocalInterruptBeforeStreamCloseFork|TestResponsesLateInterruptDoesNotPoisonNextCreate|TestResponsesInterruptDiagnosticsAreSanitized)$' \
             -count=20 -timeout=5m
       - name: Test Go packages
         if: needs.changes.outputs.manifest_only != 'true'

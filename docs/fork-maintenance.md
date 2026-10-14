@@ -62,6 +62,7 @@ them must stay local to the listed responsibility.
 | `sdk/cliproxy/service_models.go` | Pass native candidates through the fork model-registration seam |
 | `sdk/cliproxy/service_executors.go` | Pass candidates to per-auth plugin model resolution |
 | `internal/watcher/config_reload.go` | Retain detection of config writes made during a reload callback until the generic upstream fix lands |
+| `sdk/api/handlers/openai/openai_responses_websocket_forward.go` | End local interrupt eligibility before publishing a terminal response, and reopen it for the next created response |
 | `internal/pluginhost/adapters.go` | Match explicit model-provider identifiers and transport candidate models |
 | `internal/pluginhost/rpc_schema.go` | Transport host features and model-provider identifiers over RPC |
 | `internal/pluginhost/rpc_client.go` | Advertise native-candidate support and preserve model-provider identifiers |
@@ -225,6 +226,15 @@ The WebSocket retry-bind test assigns server connection ordinals before sending
 the upgrade handshake. This prevents a fast retry from being mistaken for the
 connection the fixture intentionally closes. The test-only correction retains
 all lifecycle and connection-count assertions and changes no executor behavior.
+
+Local HTTP interrupt eligibility must end before a terminal response becomes
+visible to a WebSocket client, rather than waiting for the upstream data channel
+to close. A later `response.created` reopens eligibility for the next turn.
+This temporary generic fix belongs in the response forwarder because it owns
+publication ordering; service and plugin registration seams cannot enforce it.
+`openai_responses_interrupt_lifecycle_fork_test.go` verifies completed, done, and
+incomplete events while both source channels remain open, including next-turn
+reactivation. Remove the local production delta when upstream adopts the fix.
 
 The upstream contribution-policy workflows could support a configurable opt-out
 for maintained forks. Until then, keep the repository-specific job exclusions

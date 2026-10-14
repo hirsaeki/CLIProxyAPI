@@ -13,7 +13,7 @@ func registerThinkingLevelModelFixtureFork(t *testing.T, provider, modelID strin
 	reg := registry.GetGlobalRegistry()
 	clientID := t.Name() + "-thinking-level-fixture"
 	reg.RegisterClient(clientID, provider, []*registry.ModelInfo{{
-		ID:       modelID,
+		ID: modelID,
 		Thinking: &registry.ThinkingSupport{
 			Min:            minBudget,
 			Max:            65535,
