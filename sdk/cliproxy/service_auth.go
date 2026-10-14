@@ -417,7 +417,6 @@ func (s *Service) prepareCoreAuthForModelRegistration(ctx context.Context, auth 
 		return nil
 	}
 	auth = auth.Clone()
-	s.ensureExecutorsForAuthWithContext(ctx, auth, false)
 
 	// IMPORTANT: Update coreManager FIRST, before model registration.
 	// This ensures that configuration changes (proxy_url, prefix, etc.) take effect
@@ -466,6 +465,8 @@ func (s *Service) prepareCoreAuthForModelRegistration(ctx context.Context, auth 
 			return nil
 		}
 	}
+	// Rejected inputs must not register or remove executors before reconciliation.
+	s.ensureExecutorsForAuthWithContext(ctx, auth, false)
 	s.cancelStaleAntigravityProbes(auth.ID)
 	return auth
 }

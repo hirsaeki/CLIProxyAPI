@@ -122,3 +122,69 @@ func TestPersistedAuthSurvivesPreHookWatcherSnapshotFork(t *testing.T) {
 		t.Errorf("registry did not retain persisted prefix pfx-9 for model %q", baseModel)
 	}
 }
+
+// A rejected source must not mutate executors from its incoming provider. The
+// same ordering protects the plugin-candidate path, which may unregister a
+// current native compatibility executor when the stale auth lacks base_url.
+func TestSourceFileSnapshotExecutorRegistrationUsesReconciledAuthFork(t *testing.T) {
+	for _, mode := range []string{"rejected-update", "rejected-add", "valid-add", "stale-generation"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx := coreauth.WithSkipPersist(context.Background())
+			path := filepath.Join(t.TempDir(), "executor-ordering.json")
+			raw := []byte(`{"type":"claude"}`)
+			if err := os.WriteFile(path, raw, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			manager := coreauth.NewManager(nil, nil, nil)
+			service := &Service{cfg: &config.Config{}, coreManager: manager}
+			incoming := &coreauth.Auth{ID: "executor-ordering", Provider: "claude", Status: coreauth.StatusActive}
+			incoming.SetSourceFileSnapshot(path, raw)
+			var current *coreauth.Auth
+			var err error
+			if mode == "rejected-update" || mode == "stale-generation" {
+				current, err = manager.Register(ctx, &coreauth.Auth{ID: incoming.ID, Provider: "codex", Status: coreauth.StatusActive})
+				if err != nil {
+					t.Fatal(err)
+				}
+				service.ensureExecutorsForAuth(current)
+				if mode == "stale-generation" {
+					incoming.Generation = current.Generation
+					current, err = manager.Update(ctx, current.Clone())
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			before, hadExecutor := manager.Executor("codex")
+			if mode != "valid-add" {
+				if err := os.WriteFile(path, []byte(`{"type":"codex"}`), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			prepared := service.prepareCoreAuthForModelRegistration(ctx, incoming)
+			_, hasIncomingExecutor := manager.Executor("claude")
+			if mode == "valid-add" {
+				if prepared == nil || prepared.Provider != "claude" || prepared.Generation == 0 || !hasIncomingExecutor {
+					t.Fatal("accepted auth did not receive an executor after reconciliation")
+				}
+				return
+			}
+			if hasIncomingExecutor {
+				t.Fatal("rejected incoming auth changed executor registration")
+			}
+			if current == nil {
+				if prepared != nil || len(manager.List()) != 0 {
+					t.Fatal("rejected new source installed an auth")
+				}
+				return
+			}
+			if prepared == nil || prepared.Provider != current.Provider || prepared.Generation != current.Generation {
+				t.Fatal("reconciliation did not return the retained current auth")
+			}
+			after, stillHasExecutor := manager.Executor("codex")
+			if !hadExecutor || !stillHasExecutor || before != after {
+				t.Fatal("rejected input disturbed the current executor")
+			}
+		})
+	}
+}

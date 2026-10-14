@@ -308,6 +308,9 @@ snapshot. Mismatched, missing, or unreadable sources preserve the current auth
 without persistence, generation changes, or update hooks. Versioned updates and
 registration/publication fences retain their existing semantics. Service model
 registration uses the manager's returned snapshot, including a rejected update.
+Executor binding also occurs only after reconciliation and uses that returned
+state, so rejected plugin snapshots cannot remove a current compatibility
+executor. Stale-generation inputs return before executor side effects.
 The generic manager and synthesis seams are required because service hooks cannot
 atomically validate a source against managed persistence. Remove these seams when
 upstream implements an equivalent guard.
