@@ -85,7 +85,7 @@ jobs:
             internal/runtime/executor/websocket_session_target_test.go \
             sdk/api/handlers/openai/openai_responses_websocket_forward.go \
             sdk/api/handlers/openai/openai_responses_interrupt_test.go \
-            sdk/api/handlers/openai/openai_responses_interrupt_lifecycle_fork_test.go > "$RUNNER_TEMP/fork-gofmt.diff"
+            sdk/api/handlers/openai/openai_responses_interrupt_lifecycle_fork_test.go > "$RUNNER_TEMP/fork-gofmt.diff" || { cat "$RUNNER_TEMP/fork-gofmt.diff"; exit 1; }
           cat "$RUNNER_TEMP/fork-gofmt.diff"
           test ! -s "$RUNNER_TEMP/fork-gofmt.diff"
           go test -race ./sdk/cliproxy ./internal/watcher ./internal/pluginhost \

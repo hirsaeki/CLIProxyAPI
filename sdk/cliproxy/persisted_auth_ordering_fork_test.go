@@ -60,7 +60,7 @@ func TestPersistedAuthSurvivesPreHookWatcherSnapshotFork(t *testing.T) {
 	service := &Service{
 		cfg:         cfg,
 		coreManager: manager,
-		watcher: &WatcherWrapper{
+		watcher:     &WatcherWrapper{
 			dispatchPersistedAuthWithRev: w.DispatchPersistedAuthUpdateWithRevision,
 			snapshotAuthFile:            w.SnapshotAuthFile,
 		},
