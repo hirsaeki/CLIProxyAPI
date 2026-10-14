@@ -213,6 +213,19 @@ cannot control the watcher's private hash acknowledgment. Keep its deterministic
 regression in `internal/watcher/config_reload_hash_fork_test.go`; remove the local
 production delta once upstream accepts the equivalent fix.
 
+The AI Studio thinking-level and Antigravity Interactions executor tests require
+known level-capable models, even after those model IDs leave the rolling catalog.
+Their only local changes register deterministic capability fixtures through
+`internal/runtime/executor/thinking_level_fixture_fork_test.go`. These generic
+upstream test corrections preserve every assertion and avoid changing production
+thinking behavior, model catalogs, or local overlays. Remove the helper and its
+two call sites when upstream makes the tests independent of catalog retirement.
+
+The WebSocket retry-bind test assigns server connection ordinals before sending
+the upgrade handshake. This prevents a fast retry from being mistaken for the
+connection the fixture intentionally closes. The test-only correction retains
+all lifecycle and connection-count assertions and changes no executor behavior.
+
 The upstream contribution-policy workflows could support a configurable opt-out
 for maintained forks. Until then, keep the repository-specific job exclusions
 small. The existing same-repository `automation/winget-*` exemption inside the

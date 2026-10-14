@@ -73,38 +73,26 @@ jobs:
       - name: Validate OAuth model availability release packaging
         if: needs.changes.outputs.manifest_only != 'true'
         run: bash scripts/tests/oauth-model-availability-release_test.sh
-      - name: Diagnose pre-repair baselines
-        if: needs.changes.outputs.manifest_only != 'true'
-        run: |
-          for baseline in upstream:0d18d3b365be000eeaee7de4615f9da596b2059d fork:6a6abae26132933512dca5afd0431bac9bc91461; do
-            name="${baseline%%:*}"
-            ref="${baseline#*:}"
-            baseline_dir="$RUNNER_TEMP/$name-baseline"
-            git fetch --no-tags --depth=1 origin "$ref"
-            git worktree add --detach "$baseline_dir" FETCH_HEAD
-            cp internal/watcher/config_reload_hash_fork_test.go "$baseline_dir/internal/watcher/"
-            set +e
-            (cd "$baseline_dir" && go test -race ./internal/watcher \
-              -run '^TestReloadConfigPreservesWriteDuringCallbackFork$' -count=1 -timeout=3m)
-            echo "$name watcher regression baseline exit status: $?"
-            (cd "$baseline_dir" && bash .github/scripts/refresh-model-catalogs.sh && \
-              go test ./internal/runtime/executor -count=1 -timeout=5m)
-            echo "$name executor package baseline exit status: $?"
-            set -e
-          done
       - name: Test fork model registration and config snapshot races
         if: needs.changes.outputs.manifest_only != 'true'
         run: |
           test -z "$(gofmt -l sdk/cliproxy/model_registration_config_snapshot_fork_test.go \
             sdk/cliproxy/model_registration_extensions.go sdk/cliproxy/service_executors.go \
             sdk/cliproxy/service_models.go internal/watcher/config_reload.go \
-            internal/watcher/config_reload_hash_fork_test.go)"
+            internal/watcher/config_reload_hash_fork_test.go \
+            internal/runtime/executor/thinking_level_fixture_fork_test.go \
+            internal/runtime/executor/aistudio_executor_test.go \
+            internal/runtime/executor/antigravity_executor_interactions_test.go \
+            internal/runtime/executor/websocket_session_target_test.go)"
           go test -race ./sdk/cliproxy ./internal/watcher ./internal/pluginhost \
             -run 'Fork$|OAuth.*Availability|AvailabilityFallback|TestForkConfigCommit|Native.*Candidates|CandidateModels|ModelProvider|PluginDiscovery|AntigravityCachedRegistration|Issue6583|Issue6559' \
             -count=1 -timeout=5m
           go test -race ./sdk/pluginabi -count=1 -timeout=5m
           go test -race ./sdk/cliproxy \
             -run '^TestPutOpenAICompatConcurrentWithAuthFieldsPatch_Issue6559$' -count=10 -timeout=5m
+          go test -race ./internal/runtime/executor \
+            -run '^(TestAIStudioTranslateRequestNormalizesThinkingLevel|TestAntigravityExecutorExecuteStreamTranslatesInteractionsRequest|TestWebsocketRetryBindFailureClearsActiveSessionState)$' \
+            -count=20 -timeout=5m
       - name: Test Go packages
         if: needs.changes.outputs.manifest_only != 'true'
         run: go test ./... -timeout=5m

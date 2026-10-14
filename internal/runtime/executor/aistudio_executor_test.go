@@ -40,6 +40,7 @@ func TestAIStudioTranslateRequestPreservesSummaryFromOriginalRequest(t *testing.
 }
 
 func TestAIStudioTranslateRequestNormalizesThinkingLevel(t *testing.T) {
+	registerThinkingLevelModelFixtureFork(t, "aistudio", "gemini-3.7-flash", 128)
 	executor := NewAIStudioExecutor(&config.Config{}, "aistudio", nil)
 	req := cliproxyexecutor.Request{
 		Model: "gemini-3.7-flash",
