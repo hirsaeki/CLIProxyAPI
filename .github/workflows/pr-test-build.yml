@@ -73,6 +73,17 @@ jobs:
       - name: Validate OAuth model availability release packaging
         if: needs.changes.outputs.manifest_only != 'true'
         run: bash scripts/tests/oauth-model-availability-release_test.sh
+      - name: Diagnose upstream concurrency baseline
+        if: needs.changes.outputs.manifest_only != 'true'
+        run: |
+          git fetch --no-tags --depth=1 origin 0d18d3b365be000eeaee7de4615f9da596b2059d
+          git worktree add --detach "$RUNNER_TEMP/upstream-baseline" FETCH_HEAD
+          set +e
+          (cd "$RUNNER_TEMP/upstream-baseline" && go test -race ./sdk/cliproxy \
+            -run '^TestPutOpenAICompatConcurrentWithAuthFieldsPatch_Issue6559$' -count=5 -timeout=3m)
+          baseline_status=$?
+          echo "Upstream baseline exit status: $baseline_status"
+          exit 0
       - name: Test fork model registration and config snapshot races
         if: needs.changes.outputs.manifest_only != 'true'
         run: |
