@@ -17,7 +17,7 @@ import (
 )
 
 func TestAntigravityExecutorExecuteStreamTranslatesInteractionsRequest(t *testing.T) {
-	registerThinkingLevelModelFixtureFork(t, "antigravity", "gemini-3.1-pro-low", 1)
+	registerThinkingLevelModelFixtureFork(t, "antigravity", "gemini-3.8-flash-high", 1)
 	var upstreamBody []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1internal:streamGenerateContent" {
@@ -49,9 +49,9 @@ func TestAntigravityExecutorExecuteStreamTranslatesInteractionsRequest(t *testin
 			"expired":      time.Now().Add(time.Hour).Format(time.RFC3339),
 		},
 	}
-	payload := []byte(`{"model":"gemini-3.1-pro-low","input":[{"type":"user_input","content":[{"type":"text","text":"hi"}]}],"tools":[{"name":"get_weather","description":"weather","type":"function","parameters":{"type":"object","properties":{"location":{"type":"string"}},"required":["location"]}}],"generation_config":{"tool_choice":"auto","thinking_level":"high","thinking_summaries":"auto"},"stream":true,"store":false}`)
+	payload := []byte(`{"model":"gemini-3.8-flash-high","input":[{"type":"user_input","content":[{"type":"text","text":"hi"}]}],"tools":[{"name":"get_weather","description":"weather","type":"function","parameters":{"type":"object","properties":{"location":{"type":"string"}},"required":["location"]}}],"generation_config":{"tool_choice":"auto","thinking_level":"high","thinking_summaries":"auto"},"stream":true,"store":false}`)
 	result, errExecute := exec.ExecuteStream(context.Background(), auth, cliproxyexecutor.Request{
-		Model:   "gemini-3.1-pro-low",
+		Model:   "gemini-3.8-flash-high",
 		Payload: payload,
 	}, cliproxyexecutor.Options{
 		SourceFormat:    sdktranslator.FormatInteractions,

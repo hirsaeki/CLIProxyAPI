@@ -140,6 +140,14 @@ exclusions, aliases, OAuth settings, or forced prefixes midway through a batch.
 `model_registration_config_snapshot_fork_test.go` covers these integration seams
 with different captured and current configurations.
 
+Keep the entry-captured publication fence through all three plugin paths and the
+cached Antigravity fallback. Do not reacquire the registry epoch after runtime
+reads or plugin discovery. A plugin-returned auth update may refresh the fence's
+auth inputs only after the upstream conditional identity update succeeds; its
+original registry epoch must survive. `model_registration_publication_fork_test.go`
+covers newer publications, handled-empty results, cached fallback, re-registered
+auth identities, and publication from an auth-update hook without sleeps.
+
 Providers without a native catalog must still allow plugin model discovery with
 an empty candidate list. OAuth availability is startup-only: a configured
 missing or invalid file prevents startup, and a path change requires restart.

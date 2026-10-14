@@ -23,7 +23,7 @@ var resolvePluginModelsForAuth = func(host *pluginhost.Host, ctx context.Context
 // Cached native catalogs must still pass through plugin discovery before the
 // upstream fenced-publication shortcut. Candidates retain raw model IDs so
 // aliases and prefixes are applied only after the plugin resolves its models.
-func (s *Service) tryRegisterPluginModelsForAntigravityHints(ctx context.Context, cfg *config.Config, auth *coreauth.Auth, authKind string, excluded []string, hints antigravityModelCapabilityHints) bool {
+func (s *Service) tryRegisterPluginModelsForAntigravityHints(ctx context.Context, cfg *config.Config, auth *coreauth.Auth, fence modelRegistrationFence, authKind string, excluded []string, hints antigravityModelCapabilityHints) bool {
 	if s == nil || s.pluginHost == nil {
 		return false
 	}
@@ -31,7 +31,7 @@ func (s *Service) tryRegisterPluginModelsForAntigravityHints(ctx context.Context
 	models = applyAntigravityFetchedModelCapabilities(models, hints)
 	models = s.applyOAuthModelAvailability("antigravity", auth.ID, authKind, models)
 	models = applyExcludedModels(models, excluded)
-	return s.tryRegisterPluginModelsForAuthWithConfig(ctx, cfg, auth, "antigravity", authKind, excluded, models)
+	return s.tryRegisterPluginModelsForAuthWithConfigFenced(ctx, cfg, auth, fence, "antigravity", authKind, excluded, models)
 }
 
 func providerHasNativeModelCandidates(provider string) bool {

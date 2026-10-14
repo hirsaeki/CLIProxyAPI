@@ -64,9 +64,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Refresh models catalog
-        if: needs.changes.outputs.manifest_only != 'true'
-        run: bash .github/scripts/refresh-model-catalogs.sh
       - name: Validate Windows plugin workflows
         if: needs.changes.outputs.manifest_only != 'true'
         run: bash scripts/tests/windows-plugin-workflow_test.sh
@@ -77,6 +74,7 @@ jobs:
         if: needs.changes.outputs.manifest_only != 'true'
         run: |
           gofmt -d sdk/cliproxy/model_registration_config_snapshot_fork_test.go \
+            sdk/cliproxy/model_registration_publication_fork_test.go \
             sdk/cliproxy/model_registration_extensions.go sdk/cliproxy/service_executors.go \
             sdk/cliproxy/service_models.go internal/watcher/config_reload.go \
             internal/watcher/config_reload_hash_fork_test.go \
@@ -91,6 +89,8 @@ jobs:
           go test -race ./sdk/cliproxy ./internal/watcher ./internal/pluginhost \
             -run 'Fork$|OAuth.*Availability|AvailabilityFallback|TestForkConfigCommit|Native.*Candidates|CandidateModels|ModelProvider|PluginDiscovery|AntigravityCachedRegistration|Issue6583|Issue6559' \
             -count=1 -timeout=5m
+          go test -race ./sdk/cliproxy \
+            -run '^Test(ModelRegistration|PluginRegistration)' -count=20 -timeout=5m
           go test -race ./sdk/pluginabi -count=1 -timeout=5m
           go test -race ./sdk/cliproxy \
             -run '^TestPutOpenAICompatConcurrentWithAuthFieldsPatch_Issue6559$' -count=10 -timeout=5m
@@ -110,6 +110,20 @@ jobs:
           go build -o sync-oauth-model-availability ./cmd/sync_oauth_model_availability
           rm -f test-output
           rm -f sync-oauth-model-availability
+      - name: Verify exact pull request tree
+        if: needs.changes.outputs.manifest_only != 'true'
+        run: |
+          git rev-parse HEAD HEAD^{tree}
+          git diff --exit-code
+      - name: Refresh models catalog
+        if: needs.changes.outputs.manifest_only != 'true'
+        run: bash .github/scripts/refresh-model-catalogs.sh
+      - name: Test refreshed model catalog
+        if: needs.changes.outputs.manifest_only != 'true'
+        run: |
+          go test ./... -timeout=5m
+          go build -o test-output ./cmd/server
+          rm -f test-output
 
   windows-plugin:
     name: build Windows plugin (${{ matrix.goarch }})
