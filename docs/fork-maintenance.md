@@ -61,6 +61,7 @@ them must stay local to the listed responsibility.
 | `sdk/cliproxy/service_config.go` | Warn when a startup-only availability path changes |
 | `sdk/cliproxy/service_models.go` | Pass native candidates through the fork model-registration seam |
 | `sdk/cliproxy/service_executors.go` | Pass candidates to per-auth plugin model resolution |
+| `internal/watcher/config_reload.go` | Retain detection of config writes made during a reload callback until the generic upstream fix lands |
 | `internal/pluginhost/adapters.go` | Match explicit model-provider identifiers and transport candidate models |
 | `internal/pluginhost/rpc_schema.go` | Transport host features and model-provider identifiers over RPC |
 | `internal/pluginhost/rpc_client.go` | Advertise native-candidate support and preserve model-provider identifiers |
@@ -203,6 +204,14 @@ The highest-value upstream contribution is a generic per-auth model candidate
 resolver seam. It should let a model provider receive the native candidates and
 return a filtered or enriched list without requiring provider-specific logic in
 `Service.registerModelsForAuthWithCache`.
+
+The watcher reload hash must acknowledge the content observed before loading,
+not a newer file revision written during the reload callback. Otherwise a later
+check can skip a config that was never applied. This generic correctness fix
+belongs in `internal/watcher/config_reload.go` because the service/plugin seams
+cannot control the watcher's private hash acknowledgment. Keep its deterministic
+regression in `internal/watcher/config_reload_hash_fork_test.go`; remove the local
+production delta once upstream accepts the equivalent fix.
 
 The upstream contribution-policy workflows could support a configurable opt-out
 for maintained forks. Until then, keep the repository-specific job exclusions
