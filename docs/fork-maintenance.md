@@ -61,6 +61,8 @@ them must stay local to the listed responsibility.
 | `sdk/cliproxy/service_config.go` | Warn when a startup-only availability path changes |
 | `sdk/cliproxy/service_models.go` | Pass native candidates through the fork model-registration seam |
 | `sdk/cliproxy/service_executors.go` | Pass candidates to per-auth plugin model resolution |
+| `internal/util/gemini_schema.go` | Preserve explicit all-false unions and scope union traversal to schema positions until the generic upstream fix lands |
+| `internal/runtime/executor/antigravity_executor_request.go`, `antigravity_executor_tokens.go` | Reject unsupported false schemas after the final payload rules and before generation/count transport |
 | `internal/watcher/config_reload.go` | Retain detection of config writes made during a reload callback until the generic upstream fix lands |
 | `sdk/api/handlers/openai/openai_responses_websocket_forward.go` | End local interrupt eligibility before publishing a terminal response, and reopen it for the next created response |
 | `internal/pluginhost/adapters.go` | Match explicit model-provider identifiers and transport candidate models |
@@ -261,3 +263,24 @@ If upstream accepts an equivalent hook, migrate the fork implementation to it,
 remove redundant call-site patches, retain the behavior tests, and update the
 ownership table in the same change.
 
+
+### Explicit all-false schema unions
+
+The upstream union cleaner can erase `anyOf: [false]` or `oneOf: [false]`,
+turning an unsatisfiable schema into a permissive one. There is no extension hook
+inside that cleaner, so the fork keeps a narrow preservation guard and schema-only
+union traversal in the existing function. Supporting logic and regressions live in
+`gemini_schema_false_fork.go` and its test file.
+
+Preserve the original union object, including either all-false sibling, so JSON
+Schema carriers and the tool-search object-root path retain its semantics.
+Transport representability does not guarantee that every upstream model accepts
+an impossible schema. Antigravity's compatibility path conservatively rejects
+false schemas locally with HTTP 400 rather than broadening them or sending an
+unsupported native Schema value. Its validation runs after payload rules, does
+not rewrite their output, and covers generation, streaming/rebuilt requests and
+counting. JSON-shaped conversation data and native response
+`additionalProperties: false` remain unaffected. This is an upstream contribution
+candidate; no general schema satisfiability solver is introduced. The existing
+approximate `allOf`/conditional reductions are outside this narrow union-rewrite
+fix and may still simplify constraints before union cleaning.

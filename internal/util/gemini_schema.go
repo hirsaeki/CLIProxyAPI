@@ -1227,7 +1227,7 @@ func partitionUnionBranches(items []gjson.Result, parentProps gjson.Result) (non
 }
 
 func flattenAnyOfOneOf(jsonStr string, preserveOneOf, flattenMultiBranch bool) string {
-	pathsByField := findPathsByFields(jsonStr, []string{"oneOf", "anyOf"})
+	pathsByField := findSchemaUnionPaths(jsonStr)
 	var paths []string
 	for _, key := range []string{"oneOf", "anyOf"} {
 		paths = append(paths, pathsByField[key]...)
@@ -1252,6 +1252,12 @@ func flattenAnyOfOneOf(jsonStr string, preserveOneOf, flattenMultiBranch bool) s
 		parent := gjson.Get(jsonStr, parentPath)
 		if parentPath == "" {
 			parent = gjson.Parse(jsonStr)
+		}
+		// Either unsatisfiable sibling constrains the whole node, regardless of
+		// traversal order. Keep the schema object for JSON Schema carriers; native
+		// carriers reject it locally instead of silently widening its meaning.
+		if allFalseSchemaUnion(parent.Get("anyOf").Array()) || allFalseSchemaUnion(parent.Get("oneOf").Array()) {
+			continue
 		}
 
 		// When a node declares both anyOf and oneOf on a native Schema carrier (!preserveOneOf),

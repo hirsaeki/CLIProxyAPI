@@ -100,6 +100,20 @@ jobs:
           go test -race ./sdk/api/handlers/openai \
             -run '^(TestResponsesTerminalFrameEndsLocalInterruptBeforeStreamCloseFork|TestResponsesLateInterruptDoesNotPoisonNextCreate|TestResponsesInterruptDiagnosticsAreSanitized)$' \
             -count=20 -timeout=5m
+      - name: Test unsatisfiable schema regressions
+        if: needs.changes.outputs.manifest_only != 'true'
+        run: |
+          gofmt -d internal/util/gemini_schema.go \
+            internal/util/gemini_schema_false_fork.go internal/util/gemini_schema_false_fork_test.go \
+            internal/runtime/executor/antigravity_executor_request.go \
+            internal/runtime/executor/antigravity_executor_tokens.go \
+            internal/runtime/executor/antigravity_schema_false_fork_test.go \
+            internal/runtime/executor/helps/antigravity_schema_false_fork.go \
+            internal/runtime/executor/helps/antigravity_schema_false_fork_test.go > "$RUNNER_TEMP/schema-gofmt.diff"
+          cat "$RUNNER_TEMP/schema-gofmt.diff"
+          test ! -s "$RUNNER_TEMP/schema-gofmt.diff"
+          go test -race ./internal/util ./internal/runtime/executor ./internal/runtime/executor/helps \
+            -run 'FalseSchema.*Fork$|AllFalseSchema.*Fork$|ToolSearchAllFalse.*Fork$' -count=20 -timeout=5m
       - name: Test Go packages
         if: needs.changes.outputs.manifest_only != 'true'
         run: go test ./... -timeout=5m
