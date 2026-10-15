@@ -247,7 +247,14 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 
 		// Persist the hashed value back to the config file to avoid re-hashing on next startup.
 		// Preserve YAML comments and ordering; update only the nested key.
-		_ = SaveConfigPreserveCommentsUpdateNestedScalar(configFile, managementSecretKeyPath(data), hashed)
+		secretPath := managementSecretKeyPath(data)
+		if errSave := SaveConfigPreserveCommentsUpdateNestedScalar(configFile, secretPath, hashed); errSave == nil {
+			// Derive provenance from the bytes we parsed, not a later disk read:
+			// the save helper may have incorporated an unrelated concurrent edit.
+			if rewritten, errRewrite := updateNestedScalarYAML(data, secretPath, hashed); errRewrite == nil {
+				data = rewritten
+			}
+		}
 	}
 
 	cfg.RemoteManagement.PanelGitHubRepository = strings.TrimSpace(cfg.RemoteManagement.PanelGitHubRepository)
@@ -343,10 +350,15 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 		if errWrite := os.WriteFile(configFile, cleaned, 0600); errWrite != nil {
 			return nil, fmt.Errorf("clean conflicting config fields: %w", errWrite)
 		}
+		// Only acknowledge our own layout rewrite when its input is exactly the
+		// snapshot we parsed (plus any successful secret rewrite above).
+		if bytes.Equal(current, data) {
+			data = cleaned
+		}
 	}
 
-	// Record the exact bytes this config was parsed from, so a consumer can tell
-	// it apart from a newer version of the file.
+	// Record the represented source bytes, including successful loader-only
+	// rewrites, without acknowledging unrelated changes seen by a later read.
 	cfg.SourceHash = ComputeSourceHash(data)
 
 	// Return the populated configuration struct.

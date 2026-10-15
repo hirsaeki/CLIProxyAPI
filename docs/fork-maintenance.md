@@ -53,7 +53,8 @@ them must stay local to the listed responsibility.
 
 | File | Allowed fork integration |
 | --- | --- |
-| `internal/config/config.go` | The `OAuthModelAvailabilityFile` configuration field |
+| `internal/config/config.go` | The `OAuthModelAvailabilityFile` configuration field and source-provenance contract |
+| `internal/config/config_load.go` | Advance source provenance only for exact successful loader-owned rewrites |
 | `internal/registry/model_updater.go` | Apply the local Google model overlay when loading the startup catalog |
 | `internal/registry/catalog_sources.go` | Apply the same overlay before change detection and publication for refreshed catalog sources |
 | `sdk/cliproxy/service.go` | Immutable OAuth availability state fields only |
@@ -226,6 +227,17 @@ in `internal/watcher/config_reload_hash_fork_test.go` alongside upstream's
 management-save, hash/load ordering, and concurrent-reload tests. The runtime-only
 config source hash is separate from the fork's auth-file snapshot provenance;
 both protections must survive future syncs.
+
+The loader's bcrypt and legacy-layout writebacks can change the file before the
+management handler receives the loaded snapshot. Retaining only the pre-write
+hash makes the handler reject that snapshot; a management save before the next
+reload can then overwrite the external edit with old state. The loader advances
+provenance only to its exact successful transformation of the originally parsed
+bytes. It never acknowledges an arbitrary later read, and layout cleanup advances
+provenance only when its input matches those represented bytes. Keep the
+normalization/publication and stale-rejection tests in
+`config_source_rewrite_fork_test.go`. This generic loader correction is an upstream
+contribution candidate; remove the production delta when upstream adopts it.
 
 The AI Studio thinking-level and Antigravity Interactions executor tests require
 known level-capable models, even after those model IDs leave the rolling catalog.

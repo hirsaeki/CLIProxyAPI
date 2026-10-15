@@ -97,9 +97,13 @@ jobs:
             -count=1 -timeout=5m
           go test -race ./sdk/cliproxy \
             -run '^Test(ModelRegistration|PluginRegistration)' -count=20 -timeout=5m
+          gofmt -d internal/config/config.go internal/config/config_load.go \
+            internal/api/handlers/management/config_source_rewrite_fork_test.go > "$RUNNER_TEMP/config-source-gofmt.diff"
+          cat "$RUNNER_TEMP/config-source-gofmt.diff"
+          test ! -s "$RUNNER_TEMP/config-source-gofmt.diff"
           go test -race ./internal/watcher ./internal/api/handlers/management \
             ./sdk/cliproxy ./sdk/cliproxy/auth \
-            -run 'Issue6631|Issue6643' -count=20 -timeout=5m
+            -run 'Issue6631|Issue6643|ConfigLoaderRewrite.*Fork$' -count=20 -timeout=5m
           go test -race ./sdk/pluginabi -count=1 -timeout=5m
           go test -race ./sdk/cliproxy ./sdk/cliproxy/auth ./internal/watcher/synthesizer \
             -run 'SourceFileSnapshot.*Fork$|PersistedAuthSurvivesPreHookWatcherSnapshotFork$' -count=20 -timeout=5m
