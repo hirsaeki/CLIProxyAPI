@@ -66,7 +66,6 @@ them must stay local to the listed responsibility.
 | `sdk/cliproxy/service_executors.go` | Pass candidates to per-auth plugin model resolution |
 | `internal/util/gemini_schema.go` | Preserve explicit all-false unions and scope union traversal to schema positions until the generic upstream fix lands |
 | `internal/runtime/executor/antigravity_executor_request.go`, `antigravity_executor_tokens.go` | Reject unsupported false schemas after the final payload rules and before generation/count transport |
-| `internal/watcher/config_reload.go` | Retain detection of config writes made during a reload callback until the generic upstream fix lands |
 | `sdk/api/handlers/openai/openai_responses_websocket_forward.go` | End local interrupt eligibility before publishing a terminal response, and reopen it for the next created response |
 | `internal/pluginhost/adapters.go` | Match explicit model-provider identifiers and transport candidate models |
 | `internal/pluginhost/rpc_schema.go` | Transport host features and model-provider identifiers over RPC |
@@ -219,13 +218,14 @@ resolver seam. It should let a model provider receive the native candidates and
 return a filtered or enriched list without requiring provider-specific logic in
 `Service.registerModelsForAuthWithCache`.
 
-The watcher reload hash must acknowledge the content observed before loading,
-not a newer file revision written during the reload callback. Otherwise a later
-check can skip a config that was never applied. This generic correctness fix
-belongs in `internal/watcher/config_reload.go` because the service/plugin seams
-cannot control the watcher's private hash acknowledgment. Keep its deterministic
-regression in `internal/watcher/config_reload_hash_fork_test.go`; remove the local
-production delta once upstream accepts the equivalent fix.
+Upstream now records the source hash of the bytes actually parsed by the config
+loader and serializes watcher reloads. This supersedes the fork's temporary
+observed-hash acknowledgment fix, so `internal/watcher/config_reload.go` has no
+remaining fork production delta. Keep the deterministic callback-write regression
+in `internal/watcher/config_reload_hash_fork_test.go` alongside upstream's
+management-save, hash/load ordering, and concurrent-reload tests. The runtime-only
+config source hash is separate from the fork's auth-file snapshot provenance;
+both protections must survive future syncs.
 
 The AI Studio thinking-level and Antigravity Interactions executor tests require
 known level-capable models, even after those model IDs leave the rolling catalog.
