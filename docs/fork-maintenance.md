@@ -31,6 +31,13 @@ fork-owned files should use an explicit `fork-` prefix where practical.
 Do not rename upstream-owned integration seams or bulk-rename existing files;
 rename an existing fork-owned file when a collision occurs.
 
+Upstream owns content-addressed plugin shadow copies and resident native-image
+lifetime handling in `shadow*.go` and the platform loaders. Keep the fork's two
+Windows integration points limited to the synchronous loader wrapper and host
+callback bridge; do not restore the shadow-copy helpers to `loader_windows.go`.
+Validate resident host blocks, detached callbacks, source replacement, and shadow
+reuse alongside the fork's synchronous-call and Vertex plugin runtime checks.
+
 The Vertex multi-region endpoint regression test is fork-owned:
 `internal/runtime/executor/gemini_vertex_endpoint_fork_test.go`. Keep it separate
 from upstream's `gemini_vertex_executor_test.go`.
@@ -53,14 +60,22 @@ them must stay local to the listed responsibility.
 
 | File | Allowed fork integration |
 | --- | --- |
-| `internal/config/config.go` | The `OAuthModelAvailabilityFile` configuration field |
+| `internal/config/config.go` | The `OAuthModelAvailabilityFile` configuration field and source-provenance contract |
+| `internal/config/config_load.go` | Advance source provenance only for exact successful loader-owned rewrites |
 | `internal/registry/model_updater.go` | Apply the local Google model overlay when loading the startup catalog |
 | `internal/registry/catalog_sources.go` | Apply the same overlay before change detection and publication for refreshed catalog sources |
 | `sdk/cliproxy/service.go` | Immutable OAuth availability state fields only |
+| `sdk/cliproxy/auth/types.go`, `conductor_lifecycle.go` | Runtime-only file snapshot provenance and validation inside the existing per-auth mutation gate |
+| `internal/watcher/synthesizer/file.go` | Attach source provenance to single-file and full-scan auth snapshots, including plugin outputs |
+| `sdk/cliproxy/service_auth.go` | Use the committed/current auth returned by manager reconciliation |
 | `sdk/cliproxy/builder.go` | Load and inject the startup availability snapshot |
 | `sdk/cliproxy/service_config.go` | Warn when a startup-only availability path changes |
 | `sdk/cliproxy/service_models.go` | Pass native candidates through the fork model-registration seam |
 | `sdk/cliproxy/service_executors.go` | Pass candidates to per-auth plugin model resolution |
+| `internal/util/gemini_schema.go` | Preserve explicit all-false unions and scope union traversal to schema positions until the generic upstream fix lands |
+| `internal/runtime/executor/antigravity_executor_request.go`, `antigravity_executor_tokens.go` | Reject unsupported false schemas after the final payload rules and before generation/count transport |
+| `sdk/api/handlers/openai/openai_responses_websocket_forward.go` | End local interrupt eligibility before publishing a terminal response, and reopen it for the next created response |
+| `internal/pluginhost/loader_windows.go` | Wrap the native loader with synchronous calls and route host callbacks through the fork bridge |
 | `internal/pluginhost/adapters.go` | Match explicit model-provider identifiers and transport candidate models |
 | `internal/pluginhost/rpc_schema.go` | Transport host features and model-provider identifiers over RPC |
 | `internal/pluginhost/rpc_client.go` | Advertise native-candidate support and preserve model-provider identifiers |
@@ -131,6 +146,21 @@ The model registration order is intentional:
 6. Do not append static plugin models when an authoritative OAuth availability
    entry exists.
 
+Keep the caller's immutable configuration snapshot through plugin discovery,
+including native candidates and cached Antigravity catalogs. The per-auth
+`WithConfig` registration path must not reacquire current configuration for
+exclusions, aliases, OAuth settings, or forced prefixes midway through a batch.
+`model_registration_config_snapshot_fork_test.go` covers these integration seams
+with different captured and current configurations.
+
+Keep the entry-captured publication fence through all three plugin paths and the
+cached Antigravity fallback. Do not reacquire the registry epoch after runtime
+reads or plugin discovery. A plugin-returned auth update may refresh the fence's
+auth inputs only after the upstream conditional identity update succeeds; its
+original registry epoch must survive. `model_registration_publication_fork_test.go`
+covers newer publications, handled-empty results, cached fallback, re-registered
+auth identities, and publication from an auth-update hook without sleeps.
+
 Providers without a native catalog must still allow plugin model discovery with
 an empty candidate list. OAuth availability is startup-only: a configured
 missing or invalid file prevents startup, and a path change requires restart.
@@ -197,6 +227,48 @@ resolver seam. It should let a model provider receive the native candidates and
 return a filtered or enriched list without requiring provider-specific logic in
 `Service.registerModelsForAuthWithCache`.
 
+Upstream now records the source hash of the bytes actually parsed by the config
+loader and serializes watcher reloads. This supersedes the fork's temporary
+observed-hash acknowledgment fix, so `internal/watcher/config_reload.go` has no
+remaining fork production delta. Keep the deterministic callback-write regression
+in `internal/watcher/config_reload_hash_fork_test.go` alongside upstream's
+management-save, hash/load ordering, and concurrent-reload tests. The runtime-only
+config source hash is separate from the fork's auth-file snapshot provenance;
+both protections must survive future syncs.
+
+The loader's bcrypt and legacy-layout writebacks can change the file before the
+management handler receives the loaded snapshot. Retaining only the pre-write
+hash makes the handler reject that snapshot; a management save before the next
+reload can then overwrite the external edit with old state. The loader advances
+provenance only to its exact successful transformation of the originally parsed
+bytes. It never acknowledges an arbitrary later read, and layout cleanup advances
+provenance only when its input matches those represented bytes. Keep the
+normalization/publication and stale-rejection tests in
+`config_source_rewrite_fork_test.go`. This generic loader correction is an upstream
+contribution candidate; remove the production delta when upstream adopts it.
+
+The AI Studio thinking-level and Antigravity Interactions executor tests require
+known level-capable models, even after those model IDs leave the rolling catalog.
+Their only local changes register deterministic capability fixtures through
+`internal/runtime/executor/thinking_level_fixture_fork_test.go`. These generic
+upstream test corrections preserve every assertion and avoid changing production
+thinking behavior, model catalogs, or local overlays. Remove the helper and its
+two call sites when upstream makes the tests independent of catalog retirement.
+
+The WebSocket retry-bind test assigns server connection ordinals before sending
+the upgrade handshake. This prevents a fast retry from being mistaken for the
+connection the fixture intentionally closes. The test-only correction retains
+all lifecycle and connection-count assertions and changes no executor behavior.
+
+Local HTTP interrupt eligibility must end before a terminal response becomes
+visible to a WebSocket client, rather than waiting for the upstream data channel
+to close. A later `response.created` reopens eligibility for the next turn.
+This temporary generic fix belongs in the response forwarder because it owns
+publication ordering; service and plugin registration seams cannot enforce it.
+`openai_responses_interrupt_lifecycle_fork_test.go` verifies completed, done, and
+incomplete events while both source channels remain open, including next-turn
+reactivation. Remove the local production delta when upstream adopts the fix.
+
 The upstream contribution-policy workflows could support a configurable opt-out
 for maintained forks. Until then, keep the repository-specific job exclusions
 small. The existing same-repository `automation/winget-*` exemption inside the
@@ -214,3 +286,57 @@ If upstream accepts an equivalent hook, migrate the fork implementation to it,
 remove redundant call-site patches, retain the behavior tests, and update the
 ownership table in the same change.
 
+
+### Explicit all-false schema unions
+
+The upstream union cleaner can erase `anyOf: [false]` or `oneOf: [false]`,
+turning an unsatisfiable schema into a permissive one. There is no extension hook
+inside that cleaner, so the fork keeps a narrow preservation guard and schema-only
+union traversal in the existing function. Supporting logic and regressions live in
+`gemini_schema_false_fork.go` and its test file.
+
+Preserve the original union object, including either all-false sibling, so JSON
+Schema carriers and the tool-search object-root path retain its semantics.
+Transport representability does not guarantee that every upstream model accepts
+an impossible schema. Antigravity's compatibility path conservatively rejects
+false schemas locally with HTTP 400 rather than broadening them or sending an
+unsupported native Schema value. Its validation runs after payload rules, does
+not rewrite their output, and covers generation, streaming/rebuilt requests and
+counting. JSON-shaped conversation data and native response
+`additionalProperties: false` remain unaffected. This is an upstream contribution
+candidate; no general schema satisfiability solver is introduced. The existing
+approximate `allOf`/conditional reductions are outside this narrow union-rewrite
+fix and may still simplify constraints before union cleaning.
+
+The inherited HTTP-interrupt test now waits for its fixture's cancellation
+observer through a channel before retaining its original atomic assertion. The
+incomplete WebSocket frame can arrive before that observer runs; missing
+cancellation still fails under a bounded timeout. CI repeats this unchanged
+production behavior twenty times with the race detector.
+
+### Persisted auth and queued file snapshots
+
+An unversioned file snapshot can be consumed after a newer management save but
+before its post-persist hook. Previously the old snapshot replaced the manager
+and advanced its generation, causing that hook to reject the saved state.
+`persisted_auth_ordering_fork_test.go` reproduces the completed ordering without
+sleeps; the original concurrent Issue6559 assertions remain unchanged.
+
+The fork attaches immutable runtime-only source-content provenance at synthesis.
+The existing per-auth mutation gate validates it before accepting an unversioned
+snapshot. Mismatched, missing, or unreadable sources preserve the current auth
+without persistence, generation changes, or update hooks. Versioned updates and
+registration/publication fences retain their existing semantics. Service model
+registration uses the manager's returned snapshot, including a rejected update.
+Executor binding also occurs only after reconciliation and uses that returned
+state, so rejected plugin snapshots cannot remove a current compatibility
+executor. Stale-generation inputs return before executor side effects.
+The generic manager and synthesis seams are required because service hooks cannot
+atomically validate a source against managed persistence. Remove these seams when
+upstream implements an equivalent guard.
+
+No source bytes or digest are logged or serialized. File I/O stays outside the
+manager mutex, and plugin parsing never runs inside the mutation gate. The guard
+serializes manager-mediated changes for the same auth; it does not lock out
+arbitrary external file writers. Regressions cover real save ordering, accounting,
+clone/serialization behavior, and full-scan/single-file/plugin synthesis paths.

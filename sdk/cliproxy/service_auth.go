@@ -2,6 +2,8 @@ package cliproxy
 
 import (
 	"context"
+	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -78,7 +80,7 @@ func (s *Service) emitAuthUpdate(ctx context.Context, update watcher.AuthUpdate)
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if s.watcher != nil && s.watcher.DispatchRuntimeAuthUpdate(update) {
+	if watcher := s.currentWatcher(); watcher != nil && watcher.DispatchRuntimeAuthUpdate(update) {
 		return
 	}
 	if s.authUpdates != nil {
@@ -206,10 +208,29 @@ func (s *Service) handleAuthUpdates(ctx context.Context, updates []watcher.AuthU
 			if id == "" {
 				continue
 			}
-			if existing, ok := s.coreManager.GetByID(id); ok && existing != nil && update.Auth != nil {
-				if isStaleCoreAuth(existing, update.Auth) {
+			if existing, ok := s.coreManager.GetByID(id); ok && existing != nil {
+				if update.Auth != nil && isStaleCoreAuth(existing, update.Auth) {
 					log.Debugf("skipping stale auth delete for %s: incoming gen=%d, existing gen=%d", id, update.Auth.Generation, existing.Generation)
 					continue
+				}
+				// Whole-file deletes can outlive a persisted re-create whose inline
+				// sync did not carry a revision. Recheck local files, including remote
+				// store mirrors, but do not suppress per-ID content/config deletes.
+				if update.Auth == nil && update.IsFileRemoval() {
+					path := existing.Attributes[coreauth.AttributePath]
+					switch existing.AuthSourceKind() {
+					case coreauth.AuthSourceFile:
+						if path == "" {
+							path = existing.Attributes[coreauth.AttributeSource]
+						}
+					case coreauth.AuthSourceGit, coreauth.AuthSourcePostgres, coreauth.AuthSourceObjectStore:
+						// Remote stores are file-backed only when they provide a local path.
+					default:
+						path = ""
+					}
+					if path != "" && s.shouldSkipFileAuthDelete(path, id) {
+						continue
+					}
 				}
 			}
 			s.applyCoreAuthRemoval(registrationCtx, id)
@@ -228,6 +249,49 @@ func (s *Service) handleAuthUpdates(ctx context.Context, updates []watcher.AuthU
 	finishAuthRegistrations(s, startedRegs)
 	registrationsFinished = true
 	waitAuthRegistrations(skippedWaits)
+}
+
+// shouldSkipFileAuthDelete retains re-created IDs and preserves auths on uncertain reads.
+func (s *Service) shouldSkipFileAuthDelete(path, id string) bool {
+	_, errStat := os.Stat(path)
+	if os.IsNotExist(errStat) {
+		return false
+	}
+	if errStat != nil {
+		log.Debugf("skipping auth delete for %s: backing file is not confirmed missing", id)
+		return true
+	}
+	// A file can return with only a subset of its previous plugin auth IDs.
+	// Read just this file so another file with the same ID cannot retain the auth.
+	auths, errSnapshotAuthFile := s.currentWatcher().SnapshotAuthFile(path)
+	if errSnapshotAuthFile != nil || len(auths) == 0 {
+		log.Debugf("skipping auth delete for %s: file auth snapshot is uncertain (err=%v)", id, errSnapshotAuthFile)
+		return true
+	}
+	hasAuth := false
+	for _, auth := range auths {
+		if auth == nil || auth.ID == "" {
+			continue
+		}
+		hasAuth = true
+		// Store IDs retain case, but the file synthesizer lowercases IDs on Windows.
+		// Other platforms keep exact matching for case-sensitive plugin auth IDs.
+		if authIDMatches(auth.ID, id, runtime.GOOS == "windows") {
+			log.Debugf("skipping auth delete for %s: auth ID is present in the re-created file", id)
+			return true
+		}
+	}
+	if !hasAuth {
+		log.Debugf("skipping auth delete for %s: file auth snapshot has no valid IDs", id)
+	}
+	return !hasAuth
+}
+
+func authIDMatches(snapshotID, id string, foldCase bool) bool {
+	if foldCase {
+		return strings.EqualFold(snapshotID, id)
+	}
+	return snapshotID == id
 }
 
 func coalesceAuthUpdates(updates []watcher.AuthUpdate) []watcher.AuthUpdate {
@@ -353,13 +417,13 @@ func (s *Service) prepareCoreAuthForModelRegistration(ctx context.Context, auth 
 		return nil
 	}
 	auth = auth.Clone()
-	s.ensureExecutorsForAuthWithContext(ctx, auth, false)
 
 	// IMPORTANT: Update coreManager FIRST, before model registration.
 	// This ensures that configuration changes (proxy_url, prefix, etc.) take effect
 	// immediately for API calls, rather than waiting for model registration to complete.
 	op := "register"
 	var err error
+	var committed *coreauth.Auth
 	if existing, ok := s.coreManager.GetByID(auth.ID); ok {
 		if isStaleCoreAuth(existing, auth) {
 			log.Debugf("skipping stale auth update for %s: incoming gen=%d, existing gen=%d", auth.ID, auth.Generation, existing.Generation)
@@ -382,9 +446,9 @@ func (s *Service) prepareCoreAuthForModelRegistration(ctx context.Context, auth 
 			}
 		}
 		op = "update"
-		_, err = s.coreManager.Update(ctx, auth)
+		committed, err = s.coreManager.Update(ctx, auth)
 	} else {
-		_, err = s.coreManager.Register(ctx, auth)
+		committed, err = s.coreManager.Register(ctx, auth)
 	}
 	if err != nil {
 		log.Errorf("failed to %s auth %s: %v", op, auth.ID, err)
@@ -394,7 +458,15 @@ func (s *Service) prepareCoreAuthForModelRegistration(ctx context.Context, auth 
 			return nil
 		}
 		auth = current
+	} else {
+		// A rejected file snapshot returns the current auth without committing.
+		auth = committed
+		if auth == nil {
+			return nil
+		}
 	}
+	// Rejected inputs must not register or remove executors before reconciliation.
+	s.ensureExecutorsForAuthWithContext(ctx, auth, false)
 	s.cancelStaleAntigravityProbes(auth.ID)
 	return auth
 }

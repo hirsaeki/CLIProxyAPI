@@ -105,11 +105,21 @@ type Auth struct {
 	// Runtime carries non-serialisable data used during execution (in-memory only).
 	Runtime any `json:"-"`
 
+	// sourceFileSnapshot is immutable provenance for unversioned watcher updates.
+	sourceFileSnapshot *sourceFileSnapshot
+
 	// RejectedAccessToken tracks the access token rejected by upstream 401 until a refresh succeeds.
 	RejectedAccessToken string `json:"-"`
 
 	Success int64 `json:"-"`
 	Failed  int64 `json:"-"`
+
+	// cooldownRecordedSeq is the execution sequence watermark captured when
+	// the current auth-level cooldown was recorded. Successes from executions
+	// stamped at or below it were dispatched before the cooldown existed and
+	// must not clear it. Runtime only: zero after restart so restored
+	// cooldowns can still be cleared by any success.
+	cooldownRecordedSeq uint64 `json:"-"`
 
 	recentRequests recentRequestRing `json:"-"`
 	indexAssigned  bool              `json:"-"`
@@ -228,6 +238,12 @@ type ModelState struct {
 	Quota QuotaState `json:"quota"`
 	// UpdatedAt tracks the last update timestamp for this model state.
 	UpdatedAt time.Time `json:"updated_at"`
+	// cooldownRecordedSeq is the execution sequence watermark captured when
+	// the current model cooldown was recorded. Successes from executions
+	// stamped at or below it were dispatched before the cooldown existed and
+	// must not clear it. Runtime only: zero after restart so restored
+	// cooldowns can still be cleared by any success.
+	cooldownRecordedSeq uint64 `json:"-"`
 }
 
 func recentRequestBucketID(now time.Time) int64 {

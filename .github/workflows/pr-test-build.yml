@@ -64,15 +64,79 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Refresh models catalog
-        if: needs.changes.outputs.manifest_only != 'true'
-        run: bash .github/scripts/refresh-model-catalogs.sh
       - name: Validate Windows plugin workflows
         if: needs.changes.outputs.manifest_only != 'true'
         run: bash scripts/tests/windows-plugin-workflow_test.sh
       - name: Validate OAuth model availability release packaging
         if: needs.changes.outputs.manifest_only != 'true'
         run: bash scripts/tests/oauth-model-availability-release_test.sh
+      - name: Test fork model registration and config snapshot races
+        if: needs.changes.outputs.manifest_only != 'true'
+        run: |
+          gofmt -d sdk/cliproxy/persisted_auth_ordering_fork_test.go \
+            sdk/cliproxy/auth/types.go sdk/cliproxy/auth/conductor_lifecycle.go \
+            sdk/cliproxy/auth/source_file_snapshot_fork.go sdk/cliproxy/auth/source_file_snapshot_fork_test.go \
+            sdk/cliproxy/service_auth.go internal/watcher/synthesizer/file.go \
+            internal/watcher/synthesizer/source_file_snapshot_fork_test.go \
+            sdk/cliproxy/model_registration_config_snapshot_fork_test.go \
+            sdk/cliproxy/model_registration_publication_fork_test.go \
+            sdk/cliproxy/model_registration_extensions.go sdk/cliproxy/service_executors.go \
+            sdk/cliproxy/service_models.go internal/watcher/config_reload.go \
+            internal/watcher/config_reload_hash_fork_test.go \
+            internal/runtime/executor/thinking_level_fixture_fork_test.go \
+            internal/runtime/executor/aistudio_executor_test.go \
+            internal/runtime/executor/antigravity_executor_interactions_test.go \
+            internal/runtime/executor/websocket_session_target_test.go \
+            sdk/api/handlers/openai/openai_responses_websocket_forward.go \
+            sdk/api/handlers/openai/openai_responses_interrupt_test.go \
+            sdk/api/handlers/openai/openai_responses_interrupt_lifecycle_fork_test.go > "$RUNNER_TEMP/fork-gofmt.diff" || { cat "$RUNNER_TEMP/fork-gofmt.diff"; exit 1; }
+          cat "$RUNNER_TEMP/fork-gofmt.diff"
+          test ! -s "$RUNNER_TEMP/fork-gofmt.diff"
+          go test -race ./sdk/cliproxy ./internal/watcher ./internal/pluginhost \
+            -run 'Fork$|OAuth.*Availability|AvailabilityFallback|TestForkConfigCommit|Native.*Candidates|CandidateModels|ModelProvider|PluginDiscovery|AntigravityCachedRegistration|Issue6583|Issue6559' \
+            -count=1 -timeout=5m
+          go test -race ./sdk/cliproxy \
+            -run '^Test(ModelRegistration|PluginRegistration)' -count=20 -timeout=5m
+          gofmt -d internal/config/config.go internal/config/config_load.go \
+            internal/api/handlers/management/config_source_rewrite_fork_test.go > "$RUNNER_TEMP/config-source-gofmt.diff"
+          cat "$RUNNER_TEMP/config-source-gofmt.diff"
+          test ! -s "$RUNNER_TEMP/config-source-gofmt.diff"
+          go test -race ./internal/watcher ./internal/api ./internal/api/handlers/management \
+            ./sdk/cliproxy ./sdk/cliproxy/auth \
+            -run 'Issue6631|Issue6643|ConfigLoaderRewrite.*Fork$|ConfigV8ETag' -count=20 -timeout=5m
+          go test -race ./internal/pluginhost \
+            -run '^Test(Shadow|RemoveStaleShadow|UnixPlugin)' -count=1 -timeout=5m
+          go test -race ./internal/runtime/executor ./internal/thinking \
+            ./internal/translator/claude/openai/responses \
+            -run 'ConfigurationUpdate|HasThinkingSuffix|PinsRequestPerStream' -count=1 -timeout=5m
+          go test -race ./sdk/pluginabi -count=1 -timeout=5m
+          go test -race ./sdk/cliproxy ./sdk/cliproxy/auth ./internal/watcher/synthesizer \
+            -run 'SourceFileSnapshot.*Fork$|PersistedAuthSurvivesPreHookWatcherSnapshotFork$' -count=20 -timeout=5m
+          go test -race ./sdk/cliproxy \
+            -run '^TestPutOpenAICompatConcurrentWithAuthFieldsPatch_Issue6559$' -count=10 -timeout=5m
+          go test -race ./internal/runtime/executor \
+            -run '^(TestAIStudioTranslateRequestNormalizesThinkingLevel|TestAntigravityExecutorExecuteStreamTranslatesInteractionsRequest|TestWebsocketRetryBindFailureClearsActiveSessionState)$' \
+            -count=20 -timeout=5m
+          go test -race ./sdk/api/handlers/openai \
+            -run '^(TestResponsesTerminalFrameEndsLocalInterruptBeforeStreamCloseFork|TestResponsesLateInterruptDoesNotPoisonNextCreate|TestResponsesInterruptDiagnosticsAreSanitized|TestResponsesInterruptStopsHTTPUpstream)$' \
+            -count=20 -timeout=5m
+      - name: Test unsatisfiable schema regressions
+        if: needs.changes.outputs.manifest_only != 'true'
+        run: |
+          gofmt -d internal/util/gemini_schema.go \
+            internal/util/gemini_schema_false_fork.go internal/util/gemini_schema_false_fork_test.go \
+            internal/runtime/executor/antigravity_executor_request.go \
+            internal/runtime/executor/antigravity_executor_tokens.go \
+            internal/runtime/executor/antigravity_schema_false_fork_test.go \
+            internal/runtime/executor/helps/antigravity_schema_false_fork.go \
+            internal/runtime/executor/helps/antigravity_schema_false_fork_test.go > "$RUNNER_TEMP/schema-gofmt.diff"
+          cat "$RUNNER_TEMP/schema-gofmt.diff"
+          test ! -s "$RUNNER_TEMP/schema-gofmt.diff"
+          go test -race ./internal/util ./internal/runtime/executor ./internal/runtime/executor/helps \
+            -run 'FalseSchema.*Fork$|AllFalseSchema.*Fork$|ToolSearchAllFalse.*Fork$' -count=20 -timeout=5m
+      - name: Test Go packages
+        if: needs.changes.outputs.manifest_only != 'true'
+        run: go test ./... -timeout=5m
       - name: Build
         if: needs.changes.outputs.manifest_only != 'true'
         run: |
@@ -80,6 +144,20 @@ jobs:
           go build -o sync-oauth-model-availability ./cmd/sync_oauth_model_availability
           rm -f test-output
           rm -f sync-oauth-model-availability
+      - name: Verify exact pull request tree
+        if: needs.changes.outputs.manifest_only != 'true'
+        run: |
+          git rev-parse HEAD HEAD^{tree}
+          git diff --exit-code
+      - name: Refresh models catalog
+        if: needs.changes.outputs.manifest_only != 'true'
+        run: bash .github/scripts/refresh-model-catalogs.sh
+      - name: Test refreshed model catalog
+        if: needs.changes.outputs.manifest_only != 'true'
+        run: |
+          go test ./... -timeout=5m
+          go build -o test-output ./cmd/server
+          rm -f test-output
 
   windows-plugin:
     name: build Windows plugin (${{ matrix.goarch }})
@@ -170,5 +248,5 @@ jobs:
           plugin_path="$(cygpath -w "$plugin_path")"
           CLIPROXY_VERTEX_REGION_MODELS_PLUGIN="$plugin_path" \
             go test ./internal/pluginhost \
-              -run '^(TestDynamicLibraryClientSerializesCalls|TestVertexRegionModelsPluginCABI)$' \
+              -run '^(TestDynamicLibraryClientSerializesCalls|TestDynamicLibraryClientCall.*|TestWindowsClosedClientKeepsResidentHostState|TestVertexRegionModelsPluginCABI|TestShadow.*|TestRemoveStaleShadow.*)$' \
               -count=1

@@ -52,7 +52,7 @@ func (s *FileSynthesizer) Synthesize(ctx *SynthesisContext) ([]*coreauth.Auth, e
 		if errRead != nil || len(data) == 0 {
 			continue
 		}
-		auths, errSynthesize := synthesizeFileAuths(ctx, full, data)
+		auths, errSynthesize := SynthesizeAuthFile(ctx, full, data)
 		if errSynthesize != nil {
 			log.WithError(errSynthesize).Warnf("skipping auth file %s", name)
 			continue
@@ -68,7 +68,14 @@ func (s *FileSynthesizer) Synthesize(ctx *SynthesisContext) ([]*coreauth.Auth, e
 // SynthesizeAuthFile generates Auth entries for one auth JSON file payload.
 // It shares exactly the same mapping behavior as FileSynthesizer.Synthesize.
 func SynthesizeAuthFile(ctx *SynthesisContext, fullPath string, data []byte) ([]*coreauth.Auth, error) {
-	return synthesizeFileAuths(ctx, fullPath, data)
+	auths, err := synthesizeFileAuths(ctx, fullPath, data)
+	if err != nil {
+		return nil, err
+	}
+	for _, auth := range auths {
+		auth.SetSourceFileSnapshot(fullPath, data)
+	}
+	return auths, nil
 }
 
 func synthesizeFileAuths(ctx *SynthesisContext, fullPath string, data []byte) ([]*coreauth.Auth, error) {
@@ -79,6 +86,9 @@ func synthesizeFileAuths(ctx *SynthesisContext, fullPath string, data []byte) ([
 	cfg := ctx.Config
 	var metadata map[string]any
 	if errUnmarshal := json.Unmarshal(data, &metadata); errUnmarshal != nil {
+		if ctx.StrictFileParsing {
+			return nil, fmt.Errorf("parse auth file: %w", errUnmarshal)
+		}
 		return nil, nil
 	}
 	coreauth.NormalizeCredentialMetadata(metadata)
@@ -97,6 +107,9 @@ func synthesizeFileAuths(ctx *SynthesisContext, fullPath string, data []byte) ([
 			FileName: filepath.Base(fullPath),
 			RawJSON:  data,
 		})
+		if errParse != nil && ctx.StrictFileParsing {
+			return nil, fmt.Errorf("parse plugin auth file: %w", errParse)
+		}
 		if errParse == nil && handled {
 			auths = compactPluginAuths(auths)
 			if len(auths) == 0 {
