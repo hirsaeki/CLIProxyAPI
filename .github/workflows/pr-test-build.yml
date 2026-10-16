@@ -101,9 +101,14 @@ jobs:
             internal/api/handlers/management/config_source_rewrite_fork_test.go > "$RUNNER_TEMP/config-source-gofmt.diff"
           cat "$RUNNER_TEMP/config-source-gofmt.diff"
           test ! -s "$RUNNER_TEMP/config-source-gofmt.diff"
-          go test -race ./internal/watcher ./internal/api/handlers/management \
+          go test -race ./internal/watcher ./internal/api ./internal/api/handlers/management \
             ./sdk/cliproxy ./sdk/cliproxy/auth \
-            -run 'Issue6631|Issue6643|ConfigLoaderRewrite.*Fork$' -count=20 -timeout=5m
+            -run 'Issue6631|Issue6643|ConfigLoaderRewrite.*Fork$|ConfigV8ETag' -count=20 -timeout=5m
+          go test -race ./internal/pluginhost \
+            -run '^Test(Shadow|RemoveStaleShadow|UnixPlugin)' -count=1 -timeout=5m
+          go test -race ./internal/runtime/executor ./internal/thinking \
+            ./internal/translator/claude/openai/responses \
+            -run 'ConfigurationUpdate|HasThinkingSuffix|PinsRequestPerStream' -count=1 -timeout=5m
           go test -race ./sdk/pluginabi -count=1 -timeout=5m
           go test -race ./sdk/cliproxy ./sdk/cliproxy/auth ./internal/watcher/synthesizer \
             -run 'SourceFileSnapshot.*Fork$|PersistedAuthSurvivesPreHookWatcherSnapshotFork$' -count=20 -timeout=5m
@@ -243,5 +248,5 @@ jobs:
           plugin_path="$(cygpath -w "$plugin_path")"
           CLIPROXY_VERTEX_REGION_MODELS_PLUGIN="$plugin_path" \
             go test ./internal/pluginhost \
-              -run '^(TestDynamicLibraryClientSerializesCalls|TestVertexRegionModelsPluginCABI)$' \
+              -run '^(TestDynamicLibraryClientSerializesCalls|TestDynamicLibraryClientCall.*|TestWindowsClosedClientKeepsResidentHostState|TestVertexRegionModelsPluginCABI|TestShadow.*|TestRemoveStaleShadow.*)$' \
               -count=1

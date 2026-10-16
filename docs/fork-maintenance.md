@@ -31,6 +31,13 @@ fork-owned files should use an explicit `fork-` prefix where practical.
 Do not rename upstream-owned integration seams or bulk-rename existing files;
 rename an existing fork-owned file when a collision occurs.
 
+Upstream owns content-addressed plugin shadow copies and resident native-image
+lifetime handling in `shadow*.go` and the platform loaders. Keep the fork's two
+Windows integration points limited to the synchronous loader wrapper and host
+callback bridge; do not restore the shadow-copy helpers to `loader_windows.go`.
+Validate resident host blocks, detached callbacks, source replacement, and shadow
+reuse alongside the fork's synchronous-call and Vertex plugin runtime checks.
+
 The Vertex multi-region endpoint regression test is fork-owned:
 `internal/runtime/executor/gemini_vertex_endpoint_fork_test.go`. Keep it separate
 from upstream's `gemini_vertex_executor_test.go`.
@@ -68,6 +75,7 @@ them must stay local to the listed responsibility.
 | `internal/util/gemini_schema.go` | Preserve explicit all-false unions and scope union traversal to schema positions until the generic upstream fix lands |
 | `internal/runtime/executor/antigravity_executor_request.go`, `antigravity_executor_tokens.go` | Reject unsupported false schemas after the final payload rules and before generation/count transport |
 | `sdk/api/handlers/openai/openai_responses_websocket_forward.go` | End local interrupt eligibility before publishing a terminal response, and reopen it for the next created response |
+| `internal/pluginhost/loader_windows.go` | Wrap the native loader with synchronous calls and route host callbacks through the fork bridge |
 | `internal/pluginhost/adapters.go` | Match explicit model-provider identifiers and transport candidate models |
 | `internal/pluginhost/rpc_schema.go` | Transport host features and model-provider identifiers over RPC |
 | `internal/pluginhost/rpc_client.go` | Advertise native-candidate support and preserve model-provider identifiers |
