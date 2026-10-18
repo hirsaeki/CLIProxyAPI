@@ -76,7 +76,8 @@ them must stay local to the listed responsibility.
 | `sdk/cliproxy/service_auth.go` | Use the committed/current auth returned by manager reconciliation |
 | `sdk/cliproxy/builder.go` | Load and inject the startup availability snapshot |
 | `sdk/cliproxy/service_config.go` | Warn when a startup-only availability path changes |
-| `sdk/cliproxy/service_models.go` | Pass native candidates through the fork model-registration seam |
+| `sdk/cliproxy/service_models.go` | Pass native candidates through the fork model-registration seam and preserve static-plugin exclusions in compatible-provider branches |
+| `internal/discovery/zeroconf.go` | Keep the host-conflict probe receive buffer large enough for complete mDNS datagrams until the upstream buffer fix lands |
 | `sdk/cliproxy/service_executors.go` | Pass candidates to per-auth plugin model resolution |
 | `internal/util/gemini_schema.go` | Preserve explicit all-false unions and scope union traversal to schema positions until the generic upstream fix lands |
 | `internal/runtime/executor/antigravity_executor_request.go`, `antigravity_executor_tokens.go` | Reject unsupported false schemas after the final payload rules and before generation/count transport |

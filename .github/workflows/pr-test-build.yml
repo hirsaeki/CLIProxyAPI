@@ -81,6 +81,8 @@ jobs:
             sdk/cliproxy/model_registration_config_snapshot_fork_test.go \
             sdk/cliproxy/model_registration_publication_fork_test.go \
             sdk/cliproxy/service_excluded_models_priority_test.go \
+            sdk/cliproxy/compat_plugin_exclusions_fork_test.go \
+            internal/discovery/zeroconf.go internal/discovery/host_probe_datagram_fork_test.go \
             internal/testutil/forkcatalog/codex_catalog_fork.go \
             internal/testutil/forkcatalog/codex_catalog_fork_test.go \
             internal/api/server_apply_patch_config_test.go internal/api/server_multi_agent_config_test.go \
@@ -105,6 +107,8 @@ jobs:
           go test -race ./sdk/cliproxy \
             -run '^Test(ModelRegistration|PluginRegistration|CodexExcludedModelsCredentialPriorityAfterPatchAndReload$)' -count=20 -timeout=5m
           go test -race ./internal/testutil/forkcatalog -count=20 -timeout=5m
+          go test -race ./internal/discovery ./sdk/cliproxy \
+            -run '^(TestHostProbeReceivesLargeConflictDatagramFork|TestCompatStaticPluginExclusionsFork)$' -count=20 -timeout=5m
           gofmt -d internal/config/config.go internal/config/config_load.go \
             internal/api/handlers/management/config_source_rewrite_fork_test.go > "$RUNNER_TEMP/config-source-gofmt.diff"
           cat "$RUNNER_TEMP/config-source-gofmt.diff"

@@ -30,6 +30,7 @@ const (
 	mdnsHostRecordTTL        = 120
 	mdnsLegacyRecordTTL      = 10
 	mdnsPort                 = 5353
+	mdnsReceiveBufferBytes   = 65536
 	mdnsHostProbeCount       = 3
 	mdnsHostProbeInterval    = 250 * time.Millisecond
 	mdnsAnnounceRepetitions  = 2
@@ -1107,7 +1108,7 @@ func (r *hostRecordResponder) ipsForInterface(ifIndex int) []string {
 
 func (r *hostRecordResponder) recv4() {
 	defer r.wg.Done()
-	buf := make([]byte, 65536)
+	buf := make([]byte, mdnsReceiveBufferBytes)
 	for {
 		select {
 		case <-r.stopCh:
@@ -1132,7 +1133,7 @@ func (r *hostRecordResponder) recv4() {
 
 func (r *hostRecordResponder) recv6() {
 	defer r.wg.Done()
-	buf := make([]byte, 65536)
+	buf := make([]byte, mdnsReceiveBufferBytes)
 	for {
 		select {
 		case <-r.stopCh:
@@ -2299,7 +2300,7 @@ func probeHostConflictOnLAN(ctx context.Context, hostFQDN string, ifaces []net.I
 		wg.Add(1)
 		go func(entry probeConn) {
 			defer wg.Done()
-			buf := make([]byte, 4096)
+			buf := make([]byte, mdnsReceiveBufferBytes)
 			for {
 				if ctx != nil && ctx.Err() != nil {
 					return

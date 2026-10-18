@@ -262,10 +262,10 @@ func (s *Service) registerModelsForAuthWithConfigAndCache(ctx context.Context, c
 					providerKey = "openai-compatibility"
 				}
 				if len(ms) > 0 {
-					ms = s.appendPluginModels(providerKey, ms, nil)
+					ms = s.appendPluginModels(providerKey, ms, excluded)
 					published = s.registerResolvedModelsForAuthFenced(a, fence, providerKey, applyModelPrefixes(ms, a.Prefix, cfg.ForceModelPrefix))
 				} else {
-					ms = s.appendPluginModels(providerKey, nil, nil)
+					ms = s.appendPluginModels(providerKey, nil, excluded)
 					if len(ms) > 0 {
 						published = s.registerResolvedModelsForAuthFenced(a, fence, providerKey, applyModelPrefixes(ms, a.Prefix, cfg.ForceModelPrefix))
 					} else {
@@ -285,10 +285,10 @@ func (s *Service) registerModelsForAuthWithConfigAndCache(ctx context.Context, c
 					}
 					ms := cached.models
 					if len(ms) > 0 {
-						ms = s.appendPluginModels(providerKey, ms, nil)
+						ms = s.appendPluginModels(providerKey, ms, excluded)
 						published = s.registerResolvedModelsForAuthFenced(a, fence, providerKey, applyModelPrefixes(ms, a.Prefix, cfg.ForceModelPrefix))
 					} else {
-						ms = s.appendPluginModels(providerKey, nil, nil)
+						ms = s.appendPluginModels(providerKey, nil, excluded)
 						if len(ms) > 0 {
 							published = s.registerResolvedModelsForAuthFenced(a, fence, providerKey, applyModelPrefixes(ms, a.Prefix, cfg.ForceModelPrefix))
 						} else {
@@ -308,7 +308,7 @@ func (s *Service) registerModelsForAuthWithConfigAndCache(ctx context.Context, c
 				}
 			}
 			if isCompatAuth {
-				models = s.appendPluginModels(providerKey, nil, nil)
+				models = s.appendPluginModels(providerKey, nil, excluded)
 				if len(models) > 0 {
 					published = s.registerResolvedModelsForAuthFenced(a, fence, providerKey, applyModelPrefixes(models, a.Prefix, cfg.ForceModelPrefix))
 				} else {
