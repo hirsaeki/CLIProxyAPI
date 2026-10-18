@@ -11,9 +11,11 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/home"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/testutil/forkcatalog"
 )
 
 func TestModelsApplyPatchClientConfigAndReload(t *testing.T) {
+	defer forkcatalog.UseLegacyCodex(t)()
 	for _, source := range []string{"local", "home"} {
 		t.Run(source, func(t *testing.T) {
 			modelRegistry := registry.GetGlobalRegistry()

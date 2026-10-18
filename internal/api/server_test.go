@@ -33,6 +33,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor"
 	runtimehelps "github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/testutil/forkcatalog"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executionregistry"
@@ -2127,6 +2128,7 @@ func TestClaudeModelListCloakingConfigHotReload(t *testing.T) {
 }
 
 func TestModelsWithClientVersionReturnsCodexCatalog(t *testing.T) {
+	defer forkcatalog.UseLegacyCodex(t)()
 	modelRegistry := registry.GetGlobalRegistry()
 	clientID := "test-client-version-catalog"
 	modelRegistry.RegisterClient(clientID, "codex", []*registry.ModelInfo{
@@ -3306,6 +3308,7 @@ func TestModelsForCPAClientSerializesWebSearchCapabilities(t *testing.T) {
 }
 
 func TestHomeModelsRequirePerEntryWebSearchCapabilityAndConservativeRoutes(t *testing.T) {
+	defer forkcatalog.UseLegacyCodex(t)()
 	entries, errDecode := decodeHomeModels([]byte(`{
 		"codex":[
 			{"id":"home-codex","native_capabilities":{"web_search":true}},
@@ -3496,6 +3499,7 @@ func newHomeCatalogClient(t *testing.T, payload string) *home.Client {
 }
 
 func TestModelsWithClientVersionHomeApplyPatchRouting(t *testing.T) {
+	defer forkcatalog.UseLegacyCodex(t)()
 	server := newTestServer(t)
 	server.cfg.Home.Enabled = true
 	server.cfg.Client.Codex.EnableApplyPatch = true
@@ -3598,6 +3602,7 @@ func TestModelsWithClientVersionHomeApplyPatchRouting(t *testing.T) {
 }
 
 func TestModelsWithClientVersionHomeSearchToolRouting(t *testing.T) {
+	defer forkcatalog.UseLegacyCodex(t)()
 	for _, tc := range []struct {
 		name       string
 		toolSearch bool

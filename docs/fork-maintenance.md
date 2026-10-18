@@ -19,6 +19,13 @@ reviewable.
 
 ## Ownership Boundaries
 
+Historical Codex capability tests use the scoped fixture in
+`internal/testutil/forkcatalog/` when they require retired model templates.
+The helper preserves other current entries and restores the exact prior catalog
+with a deferred function before test cleanup. Keep it limited to serial tests
+without an active service catalog updater. Do not pin the live refresh step or
+replace its complete regression suite with the historical fixture.
+
 Fork-owned files contain the implementation and most tests for fork features.
 They may be changed freely when the feature requires it, while still following
 the repository's compatibility rules.
