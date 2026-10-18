@@ -80,6 +80,22 @@ jobs:
             internal/watcher/synthesizer/source_file_snapshot_fork_test.go \
             sdk/cliproxy/model_registration_config_snapshot_fork_test.go \
             sdk/cliproxy/model_registration_publication_fork_test.go \
+            sdk/cliproxy/service_excluded_models_priority_test.go \
+            sdk/cliproxy/compat_plugin_exclusions_fork_test.go \
+            internal/discovery/zeroconf.go internal/discovery/host_probe_datagram_fork_test.go \
+            internal/runtime/executor/claude_executor_stream.go \
+            internal/runtime/executor/claude_sse_limit_fork_test.go \
+            internal/runtime/executor/helps/claude_sse_limit_fork.go \
+            internal/runtime/executor/helps/claude_sse_limit_fork_test.go \
+            sdk/api/handlers/claude/code_handlers.go \
+            sdk/api/handlers/claude/stream_buffer_bounds_fork.go \
+            sdk/api/handlers/claude/stream_buffer_bounds_fork_test.go \
+            internal/testutil/forkcatalog/codex_catalog_fork.go \
+            internal/testutil/forkcatalog/codex_catalog_fork_test.go \
+            internal/api/server_apply_patch_config_test.go internal/api/server_multi_agent_config_test.go \
+            internal/api/server_test.go internal/client/codex/models/apply_patch_test.go \
+            internal/client/codex/models/models_test.go internal/registry/model_definitions_test.go \
+            sdk/api/handlers/openai/codex_client_models_test.go \
             sdk/cliproxy/model_registration_extensions.go sdk/cliproxy/service_executors.go \
             sdk/cliproxy/service_models.go internal/watcher/config_reload.go \
             internal/watcher/config_reload_hash_fork_test.go \
@@ -92,11 +108,19 @@ jobs:
             sdk/api/handlers/openai/openai_responses_interrupt_lifecycle_fork_test.go > "$RUNNER_TEMP/fork-gofmt.diff" || { cat "$RUNNER_TEMP/fork-gofmt.diff"; exit 1; }
           cat "$RUNNER_TEMP/fork-gofmt.diff"
           test ! -s "$RUNNER_TEMP/fork-gofmt.diff"
+          go test ./internal/util -run '^Test(NoInPlaceSJSONWrites|InPlaceByteWritesAreReviewed)$' -count=1
           go test -race ./sdk/cliproxy ./internal/watcher ./internal/pluginhost \
             -run 'Fork$|OAuth.*Availability|AvailabilityFallback|TestForkConfigCommit|Native.*Candidates|CandidateModels|ModelProvider|PluginDiscovery|AntigravityCachedRegistration|Issue6583|Issue6559' \
             -count=1 -timeout=5m
           go test -race ./sdk/cliproxy \
-            -run '^Test(ModelRegistration|PluginRegistration)' -count=20 -timeout=5m
+            -run '^Test(ModelRegistration|PluginRegistration|CodexExcludedModelsCredentialPriorityAfterPatchAndReload$)' -count=20 -timeout=5m
+          go test -race ./internal/runtime/executor/helps ./sdk/api/handlers/claude \
+            -run 'TestClaudeSSE.*Fork|TestClaudeStream.*Overflow.*Fork' -count=20 -timeout=5m
+          go test -race ./internal/runtime/executor \
+            -run '^TestClaudeExecutorSSEEventLimitFork$' -count=1 -timeout=5m
+          go test -race ./internal/testutil/forkcatalog -count=20 -timeout=5m
+          go test -race ./internal/discovery ./sdk/cliproxy \
+            -run '^(TestHostProbeReceivesLargeConflictDatagramFork|TestCompatStaticPluginExclusionsFork)$' -count=20 -timeout=5m
           gofmt -d internal/config/config.go internal/config/config_load.go \
             internal/api/handlers/management/config_source_rewrite_fork_test.go > "$RUNNER_TEMP/config-source-gofmt.diff"
           cat "$RUNNER_TEMP/config-source-gofmt.diff"
@@ -110,8 +134,8 @@ jobs:
             ./internal/translator/claude/openai/responses \
             -run 'ConfigurationUpdate|HasThinkingSuffix|PinsRequestPerStream' -count=1 -timeout=5m
           go test -race ./sdk/pluginabi -count=1 -timeout=5m
-          go test -race ./sdk/cliproxy ./sdk/cliproxy/auth ./internal/watcher/synthesizer \
-            -run 'SourceFileSnapshot.*Fork$|PersistedAuthSurvivesPreHookWatcherSnapshotFork$' -count=20 -timeout=5m
+          go test -race ./sdk/cliproxy ./sdk/cliproxy/auth ./internal/watcher ./internal/watcher/synthesizer \
+            -run 'FileSnapshot|PersistedAuthSurvivesPreHookWatcherSnapshotFork$' -count=20 -timeout=5m
           go test -race ./sdk/cliproxy \
             -run '^TestPutOpenAICompatConcurrentWithAuthFieldsPatch_Issue6559$' -count=10 -timeout=5m
           go test -race ./internal/runtime/executor \

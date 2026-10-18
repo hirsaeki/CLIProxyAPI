@@ -6,11 +6,13 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/testutil/forkcatalog"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
 
 func TestCodexClientModelsResponseMultiAgentV2FollowsConfig(t *testing.T) {
+	defer forkcatalog.UseLegacyCodex(t)()
 	modelID := "codex-client-multi-agent-v2-test"
 	clientID := "codex-client-multi-agent-v2-test-client"
 	modelRegistry := registry.GetGlobalRegistry()
@@ -308,6 +310,7 @@ type catalogUnsupportedExecutor struct{ auth.ProviderExecutor }
 func (catalogUnsupportedExecutor) SupportsApplyPatch() bool { return false }
 
 func TestCodexClientModelsApplyPatchRouting(t *testing.T) {
+	defer forkcatalog.UseLegacyCodex(t)()
 	modelRegistry := registry.GetGlobalRegistry()
 	registrations := []struct {
 		provider string

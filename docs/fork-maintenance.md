@@ -19,6 +19,13 @@ reviewable.
 
 ## Ownership Boundaries
 
+Historical Codex capability tests use the scoped fixture in
+`internal/testutil/forkcatalog/` when they require retired model templates.
+The helper preserves other current entries and restores the exact prior catalog
+with a deferred function before test cleanup. Keep it limited to serial tests
+without an active service catalog updater. Do not pin the live refresh step or
+replace its complete regression suite with the historical fixture.
+
 Fork-owned files contain the implementation and most tests for fork features.
 They may be changed freely when the feature requires it, while still following
 the repository's compatibility rules.
@@ -65,12 +72,14 @@ them must stay local to the listed responsibility.
 | `internal/registry/model_updater.go` | Apply the local Google model overlay when loading the startup catalog |
 | `internal/registry/catalog_sources.go` | Apply the same overlay before change detection and publication for refreshed catalog sources |
 | `sdk/cliproxy/service.go` | Immutable OAuth availability state fields only |
-| `sdk/cliproxy/auth/types.go`, `conductor_lifecycle.go` | Runtime-only file snapshot provenance and validation inside the existing per-auth mutation gate |
-| `internal/watcher/synthesizer/file.go` | Attach source provenance to single-file and full-scan auth snapshots, including plugin outputs |
+| `sdk/cliproxy/auth/conductor_lifecycle.go` | Reject stale new registrations using upstream canonical file provenance inside the existing per-auth mutation gate |
 | `sdk/cliproxy/service_auth.go` | Use the committed/current auth returned by manager reconciliation |
 | `sdk/cliproxy/builder.go` | Load and inject the startup availability snapshot |
 | `sdk/cliproxy/service_config.go` | Warn when a startup-only availability path changes |
-| `sdk/cliproxy/service_models.go` | Pass native candidates through the fork model-registration seam |
+| `sdk/cliproxy/service_models.go` | Pass native candidates through the fork model-registration seam and preserve static-plugin exclusions in compatible-provider branches |
+| `internal/runtime/executor/claude_executor_stream.go` | Bound complete native and translated Claude SSE events through the fork-owned helper before appending, preserving failed usage on overflow |
+| `sdk/api/handlers/claude/code_handlers.go` | Bound partial lines and multi-line SSE events through the fork-owned observer state and existing `ChunkError` hook, including the first chunk before headers |
+| `internal/discovery/zeroconf.go` | Keep the host-conflict probe receive buffer large enough for complete mDNS datagrams until the upstream buffer fix lands |
 | `sdk/cliproxy/service_executors.go` | Pass candidates to per-auth plugin model resolution |
 | `internal/util/gemini_schema.go` | Preserve explicit all-false unions and scope union traversal to schema positions until the generic upstream fix lands |
 | `internal/runtime/executor/antigravity_executor_request.go`, `antigravity_executor_tokens.go` | Reject unsupported false schemas after the final payload rules and before generation/count transport |
@@ -151,7 +160,9 @@ including native candidates and cached Antigravity catalogs. The per-auth
 `WithConfig` registration path must not reacquire current configuration for
 exclusions, aliases, OAuth settings, or forced prefixes midway through a batch.
 `model_registration_config_snapshot_fork_test.go` covers these integration seams
-with different captured and current configurations.
+with different captured and current configurations. Upstream's global-exclusion
+fence must still reject obsolete exclusions; captured aliases, settings and
+prefixes remain consistent when the exclusion policy is current.
 
 Keep the entry-captured publication fence through all three plugin paths and the
 cached Antigravity fallback. Do not reacquire the registry epoch after runtime
@@ -160,6 +171,11 @@ auth inputs only after the upstream conditional identity update succeeds; its
 original registry epoch must survive. `model_registration_publication_fork_test.go`
 covers newer publications, handled-empty results, cached fallback, re-registered
 auth identities, and publication from an auth-update hook without sleeps.
+Propagate upstream's handled/publication result through plugin-only, native and
+cached Antigravity discovery. A rejected result must reach the completion pass,
+which recomputes once from the latest auth instead of publishing stale models or
+leaving a client empty after an in-flight plugin save. Static plugin models remain
+subject to upstream exclusions and the authoritative OAuth availability guard.
 
 Providers without a native catalog must still allow plugin model discovery with
 an empty candidate list. OAuth availability is startup-only: a configured
@@ -322,21 +338,52 @@ and advanced its generation, causing that hook to reject the saved state.
 `persisted_auth_ordering_fork_test.go` reproduces the completed ordering without
 sleeps; the original concurrent Issue6559 assertions remain unchanged.
 
-The fork attaches immutable runtime-only source-content provenance at synthesis.
-The existing per-auth mutation gate validates it before accepting an unversioned
-snapshot. Mismatched, missing, or unreadable sources preserve the current auth
-without persistence, generation changes, or update hooks. Versioned updates and
-registration/publication fences retain their existing semantics. Service model
-registration uses the manager's returned snapshot, including a rejected update.
-Executor binding also occurs only after reconciliation and uses that returned
-state, so rejected plugin snapshots cannot remove a current compatibility
-executor. Stale-generation inputs return before executor side effects.
-The generic manager and synthesis seams are required because service hooks cannot
-atomically validate a source against managed persistence. Remove these seams when
-upstream implements an equivalent guard.
+Upstream now owns canonical file-snapshot provenance, synthesis binding, watcher
+equality, and replacement-update validation. Use that single mechanism rather
+than retaining the fork's raw-byte marker: formatting-only rewrites must not
+create spurious updates or reject current snapshots. The fork's
+`SetSourceFileSnapshot` API delegates to upstream `BindFileSnapshot` for compatibility.
+The redundant `auth/types.go` and synthesizer production deltas are removed.
+
+Upstream does not validate new registrations before committing. Keep the narrow
+`Manager.Register` guard under the existing per-auth mutation gate, before
+generation/registration-epoch changes or persistence. It uses upstream
+`FileSnapshotMatchesDisk` and preserves the current auth (or absence) when a
+source is changed, missing or unreadable. Both new and existing registrations
+accept formatting-only rewrites. Runtime commits clear the observation marker.
+
+Service model registration uses the manager's returned committed/current snapshot,
+including rejected updates. Executor binding occurs only after reconciliation,
+so rejected plugin snapshots cannot remove a current compatibility executor.
+Stale-generation inputs return before executor side effects. Keep this ordering
+when adopting upstream's same-generation early return and completion retry.
 
 No source bytes or digest are logged or serialized. File I/O stays outside the
 manager mutex, and plugin parsing never runs inside the mutation gate. The guard
 serializes manager-mediated changes for the same auth; it does not lock out
 arbitrary external file writers. Regressions cover real save ordering, accounting,
-clone/serialization behavior, and full-scan/single-file/plugin synthesis paths.
+clone/serialization behavior, canonical formatting equivalence, and
+full-scan/single-file/plugin synthesis paths. Retire the remaining Register seam
+when upstream adds equivalent registration validation.
+
+## Claude SSE event bounds
+
+The scanner's per-line limit does not bound an event containing many short lines.
+Keep the 50 MiB whole-event limit in `helps/claude_sse_limit_fork.go`, matching the
+existing scanner ceiling. Native and translated executor paths must reject before
+appending, report failed usage, close the body, and skip successful continuity
+publication. The handler observer uses a single bounded data buffer plus a bounded
+partial line; per-line slices would retain unbounded allocation overhead. Completed
+line/event buffers above 64 KiB are released rather than retained for a long-lived
+stream; small buffers remain reusable. Its
+fork-owned helper rejects the first chunk before committing headers and later
+chunks through the existing `ChunkError` hook. A withheld chunk must not advance
+written-newline or terminal state. Overflow emits one sanitized error, never a
+synthetic successful terminator. These narrow upstream-file seams are needed
+because the existing scanner and forwarder hooks alone do not bound parsing state.
+
+`TestClaudeExecutorSSEEventLimitFork` exercises native and translated overflow while
+the upstream stays open, including body closure and failed token accounting. The
+fork-owned helper/handler tests cover exact limits, resets, many short lines,
+unterminated lines, first-chunk handling, and single-error cancellation. Keep these
+alongside the upstream multiline, truncation, and terminal-state regressions.

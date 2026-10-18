@@ -207,3 +207,45 @@ func (h *publicationHookFork) OnAuthUpdated(_ context.Context, auth *coreauth.Au
 	h.onUpdate(auth)
 }
 func (*publicationHookFork) OnResult(context.Context, coreauth.Result) {}
+
+// Each fork candidate path must propagate a rejected publication to upstream's
+// completion pass, which recomputes once from the latest auth instead of leaving
+// the client without models after an in-flight plugin save.
+func TestPluginRegistrationReconcilesSupersededCandidatesFork(t *testing.T) {
+	for _, provider := range []string{"custom-provider", "vertex", "antigravity"} {
+		t.Run(provider, func(t *testing.T) {
+			svc, auth := publicationFixtureFork(t, provider, nil)
+			reg := GlobalModelRegistry()
+			calls := 0
+			var fresh *coreauth.Auth
+			setPublicationResolverFork(t, func(_ *pluginhost.Host, ctx context.Context, a *coreauth.Auth, candidates []*ModelInfo) pluginhost.AuthModelResult {
+				calls++
+				checkPublicationCandidatesFork(t, provider, candidates)
+				if calls == 1 {
+					updated := a.Clone()
+					updated.Prefix = "fresh"
+					var err error
+					fresh, err = svc.coreManager.Update(ctx, updated)
+					if err != nil || fresh == nil {
+						t.Fatalf("interleaved update failed: %v", err)
+					}
+					reg.UnregisterClient(a.ID)
+					return pluginhost.AuthModelResult{Provider: provider, Handled: true, Models: []*ModelInfo{{ID: "stale-model"}}}
+				}
+				if calls != 2 || a.Prefix != "fresh" || a.Generation != fresh.Generation {
+					t.Fatalf("completion did not use the latest auth exactly once: calls=%d, auth=%#v", calls, a)
+				}
+				return pluginhost.AuthModelResult{Provider: provider, Handled: true, Models: []*ModelInfo{{ID: "latest-model"}}}
+			})
+
+			generation := svc.completeModelRegistrationForAuthWithCache(t.Context(), auth, nil)
+			models := reg.GetModelsForClient(auth.ID)
+			if calls != 2 || fresh == nil || generation != fresh.Generation {
+				t.Fatalf("completion calls=%d, generation=%d, latest=%#v", calls, generation, fresh)
+			}
+			if len(models) != 1 || models[0].ID != "fresh/latest-model" {
+				t.Fatalf("latest candidate result was not published: %#v", models)
+			}
+		})
+	}
+}

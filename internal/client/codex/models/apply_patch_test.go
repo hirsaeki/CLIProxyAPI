@@ -5,9 +5,11 @@ import (
 	"testing"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/testutil/forkcatalog"
 )
 
 func TestCodexCatalogApplyPatchCapability(t *testing.T) {
+	defer forkcatalog.UseLegacyCodex(t)()
 	modelRegistry := registry.GetGlobalRegistry()
 	clientID := "catalog-patch-metadata-test"
 	modelRegistry.RegisterClient(clientID, "custom-compat", []*registry.ModelInfo{
@@ -94,6 +96,7 @@ func TestCodexCatalogApplyPatchCapability(t *testing.T) {
 }
 
 func TestCodexCatalogApplyPatchLegacyEntryPointsUnknown(t *testing.T) {
+	defer forkcatalog.UseLegacyCodex(t)()
 	available := []map[string]any{{"id": "gpt-5.5"}, {"id": "custom-model"}, {"id": "gpt-reserve"}}
 	responses := []map[string]any{
 		BuildResponse(available, nil, false),
@@ -153,6 +156,7 @@ func TestApplyPatchFieldModalities(t *testing.T) {
 }
 
 func TestCodexCatalogApplyPatch_TemplateModelsRetainFreeformByDefault_Issue6286(t *testing.T) {
+	defer forkcatalog.UseLegacyCodex(t)()
 	// Models defined in codex_client_models.json with "apply_patch_tool_type": "freeform"
 	// must retain "freeform" under pure Codex providers even when enable-apply-patch is false (capability == nil).
 	canonicalTemplateModels := []string{

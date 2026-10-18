@@ -24,6 +24,7 @@ import (
 	. "github.com/router-for-me/CLIProxyAPI/v8/internal/constant"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	log "github.com/sirupsen/logrus"
@@ -320,26 +321,28 @@ func (h *ClaudeCodeAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON [
 					}
 					return
 				}
-				// Stream closed without data? Send DONE or just headers.
+				// Stream closed without data: delegate to forwardClaudeStream with the closed dataChan to surface missing message_stop.
 				commitSSE()
-				flusher.Flush()
-				cliCancel(nil)
+				h.forwardClaudeStream(c, flusher, func(err error) { cliCancel(err) }, dataChan, errChan)
 				return
 			}
 
-			// Success! Set headers now.
 			stopKeepAlive()
+			var streamState claudeSSEStreamState
+			streamState.trailingNewlines = 2
+			if !h.acceptClaudeStreamChunkFork(c, flusher, func(err error) { cliCancel(err) }, &streamState, chunk, committed) {
+				return
+			}
 			commitSSE()
 
-			// Write the first chunk
-			sawErrorEvent := claudeChunkHasErrorEvent(chunk)
+			// Write the first chunk.
 			if len(chunk) > 0 {
 				_, _ = c.Writer.Write(chunk)
 				flusher.Flush()
 			}
 
 			// Continue streaming the rest
-			h.forwardClaudeStream(c, flusher, func(err error) { cliCancel(err) }, dataChan, errChan, sawErrorEvent)
+			h.forwardClaudeStreamWithState(c, flusher, func(err error) { cliCancel(err) }, dataChan, errChan, &streamState)
 			return
 		case <-keepAliveC:
 			writeKeepAlive()
@@ -347,36 +350,182 @@ func (h *ClaudeCodeAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON [
 	}
 }
 
-func claudeChunkHasErrorEvent(chunk []byte) bool {
-	return bytes.Contains(chunk, []byte("event: error\n")) || bytes.Contains(chunk, []byte("event: error\r\n"))
+type claudeSSEStreamState struct {
+	claudeSSEBufferBoundsFork
+	sawErrorEvent      bool
+	sawMessageStop     bool
+	sawBareMessageJSON bool
+	trailingNewlines   int
+	currentEvent       string
+	eventData          bytes.Buffer
+	lineBuf            bytes.Buffer
+}
+
+func (s *claudeSSEStreamState) ObserveChunk(chunk []byte) {
+	if len(chunk) == 0 || s.bufferError != nil {
+		return
+	}
+	// Check before parsing: a rejected chunk is never written downstream.
+	if !s.preflightSSEChunkFork(chunk) {
+		s.rejectSSEChunkFork()
+		return
+	}
+	for _, b := range chunk {
+		s.eventBytes++
+		if b == '\n' {
+			s.observeLine(s.lineBuf.Bytes())
+			helps.ResetClaudeSSEBuffer(&s.lineBuf)
+			continue
+		}
+		s.lineBuf.WriteByte(b)
+	}
+	s.trailingNewlines = advanceClaudeSSENewlineCount(s.trailingNewlines, chunk)
+}
+
+func (s *claudeSSEStreamState) FlushPendingLine() {
+	if s.bufferError != nil {
+		return
+	}
+	if s.lineBuf.Len() > 0 {
+		s.observeLine(s.lineBuf.Bytes())
+		helps.ResetClaudeSSEBuffer(&s.lineBuf)
+	}
+	s.flushEventData()
+}
+
+func (s *claudeSSEStreamState) flushEventData() {
+	if s.eventData.Len() > 0 {
+		joined := bytes.TrimSpace(s.eventData.Bytes())
+		if len(joined) > 0 && gjson.ValidBytes(joined) {
+			s.observeJSONPayload(joined, true)
+		}
+		helps.ResetClaudeSSEBuffer(&s.eventData)
+	}
+}
+
+func (s *claudeSSEStreamState) ensureSSEEventBoundary(w io.Writer) {
+	if s.sawBareMessageJSON {
+		return
+	}
+	switch s.trailingNewlines {
+	case 0:
+		_, _ = w.Write([]byte("\n\n"))
+	case 1:
+		_, _ = w.Write([]byte("\n"))
+	}
+	s.trailingNewlines = 2
+}
+
+func (s *claudeSSEStreamState) observeLine(line []byte) {
+	trimmed := bytes.TrimSpace(line)
+	if len(trimmed) == 0 {
+		s.flushEventData()
+		s.currentEvent = ""
+		s.eventBytes = 0
+		return
+	}
+	if bytes.HasPrefix(trimmed, []byte("event:")) {
+		s.currentEvent = strings.TrimSpace(string(trimmed[len("event:"):]))
+		return
+	}
+	if bytes.HasPrefix(trimmed, []byte("data:")) {
+		payload := bytes.TrimSpace(trimmed[len("data:"):])
+		if len(payload) > 0 {
+			if s.eventData.Len() > 0 {
+				s.eventData.WriteByte('\n')
+			}
+			s.eventData.Write(payload)
+		}
+		return
+	}
+	if !bytes.HasPrefix(trimmed, []byte("{")) || !gjson.ValidBytes(trimmed) {
+		return
+	}
+	s.observeJSONPayload(trimmed, false)
+}
+
+func (s *claudeSSEStreamState) observeJSONPayload(payload []byte, hasDataPrefix bool) {
+	root := gjson.ParseBytes(payload)
+	switch root.Get("type").String() {
+	case "message_stop":
+		s.sawMessageStop = true
+	case "error":
+		s.sawErrorEvent = true
+	case "message":
+		if !hasDataPrefix && strings.TrimSpace(root.Get("stop_reason").String()) != "" {
+			s.sawMessageStop = true
+			s.sawBareMessageJSON = true
+		}
+	default:
+		if hasDataPrefix && s.currentEvent == "error" && root.Get("error").Exists() {
+			s.sawErrorEvent = true
+		}
+	}
+}
+
+func advanceClaudeSSENewlineCount(prev int, chunk []byte) int {
+	count := prev
+	for _, b := range chunk {
+		switch b {
+		case '\r':
+			continue
+		case '\n':
+			if count < 2 {
+				count++
+			}
+		default:
+			count = 0
+		}
+	}
+	return count
 }
 
 func (h *ClaudeCodeAPIHandler) forwardClaudeStream(c *gin.Context, flusher http.Flusher, cancel func(error), data <-chan []byte, errs <-chan *interfaces.ErrorMessage, initialErrorWritten ...bool) {
-	sawErrorEvent := len(initialErrorWritten) > 0 && initialErrorWritten[0]
+	state := &claudeSSEStreamState{
+		sawErrorEvent:    len(initialErrorWritten) > 0 && initialErrorWritten[0],
+		trailingNewlines: 2,
+	}
+	h.forwardClaudeStreamWithState(c, flusher, cancel, data, errs, state)
+}
+
+func (h *ClaudeCodeAPIHandler) forwardClaudeStreamWithState(c *gin.Context, flusher http.Flusher, cancel func(error), data <-chan []byte, errs <-chan *interfaces.ErrorMessage, state *claudeSSEStreamState) {
+	if state == nil {
+		state = &claudeSSEStreamState{trailingNewlines: 2}
+	}
 	h.ForwardStream(c, flusher, cancel, data, errs, handlers.StreamForwardOptions{
 		WriteChunk: func(chunk []byte) {
 			if len(chunk) == 0 {
 				return
 			}
-			if claudeChunkHasErrorEvent(chunk) {
-				sawErrorEvent = true
+			state.ObserveChunk(chunk)
+			if state.bufferError != nil {
+				h.writeClaudeStreamTerminalErrorFork(c.Writer, state, state.bufferError)
+				return
 			}
 			_, _ = c.Writer.Write(chunk)
 		},
+		ChunkError: func() *interfaces.ErrorMessage { return state.bufferError },
 		WriteTerminalError: func(errMsg *interfaces.ErrorMessage) {
-			if errMsg == nil || sawErrorEvent {
-				return
+			h.writeClaudeStreamTerminalErrorFork(c.Writer, state, errMsg)
+		},
+		CloseError: func() *interfaces.ErrorMessage {
+			if state.bufferError != nil {
+				return state.bufferError
 			}
-			if !c.Writer.Written() {
-				status := http.StatusInternalServerError
-				if errMsg.StatusCode > 0 {
-					status = errMsg.StatusCode
-				}
-				c.Status(status)
+			state.FlushPendingLine()
+			if state.sawMessageStop || state.sawErrorEvent {
+				return nil
 			}
-
-			errorBytes, _ := json.Marshal(h.toClaudeError(errMsg))
-			_, _ = fmt.Fprintf(c.Writer, "event: error\ndata: %s\n\n", errorBytes)
+			return &interfaces.ErrorMessage{
+				StatusCode: http.StatusBadGateway,
+				Error:      fmt.Errorf("upstream stream closed before message_stop"),
+			}
+		},
+		WriteDone: func() {
+			state.FlushPendingLine()
+			if state.sawMessageStop || state.sawErrorEvent {
+				state.ensureSSEEventBoundary(c.Writer)
+			}
 		},
 	})
 }
@@ -542,6 +691,8 @@ func claudeErrorTypeFromStatus(status int) string {
 		return "permission_error"
 	case http.StatusNotFound:
 		return "not_found_error"
+	case http.StatusConflict:
+		return "conflict_error"
 	case http.StatusRequestEntityTooLarge:
 		return "request_too_large"
 	case http.StatusTooManyRequests:

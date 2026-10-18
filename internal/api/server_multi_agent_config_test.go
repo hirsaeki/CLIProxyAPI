@@ -10,9 +10,11 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/home"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/testutil/forkcatalog"
 )
 
 func TestModelsMultiAgentClientConfigAndReload(t *testing.T) {
+	defer forkcatalog.UseLegacyCodex(t)()
 	for _, source := range []string{"local", "home"} {
 		t.Run(source, func(t *testing.T) {
 			const modelID = "config-multi-agent-synthetic"

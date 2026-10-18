@@ -266,3 +266,38 @@ func TestManagerSourceFileSnapshotValidatedAfterActiveSaveFork(t *testing.T) {
 		})
 	}
 }
+
+// Register must use the same canonical observation as upstream Update: a
+// formatting-only rewrite is current, while actual content changes remain stale.
+func TestManagerSourceFileSnapshotRegisterAcceptsReformatFork(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		name := "new"
+		if existing {
+			name = "existing"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx := WithSkipPersist(t.Context())
+			manager := NewManager(nil, nil, nil)
+			input := &Auth{ID: t.Name(), Provider: "audit", Status: StatusActive, Label: "fresh"}
+			if existing {
+				old := input.Clone()
+				old.Label = "old"
+				if _, err := manager.Register(ctx, old); err != nil {
+					t.Fatal(err)
+				}
+			}
+			path := filepath.Join(t.TempDir(), "auth.json")
+			input.SetSourceFileSnapshot(path, []byte(`{"type":"audit","label":"fresh"}`))
+			if err := os.WriteFile(path, []byte("{\n  \"label\": \"fresh\",\n  \"type\": \"audit\"\n}\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			got, err := manager.Register(ctx, input)
+			if err != nil || got == nil || got.Label != "fresh" || got.Generation == 0 {
+				t.Fatalf("canonical source was not registered: auth=%#v, error=%v", got, err)
+			}
+			if got.fileSnapshotPath != "" || got.fileSnapshotDigest != "" {
+				t.Fatal("committed auth retained its file observation")
+			}
+		})
+	}
+}

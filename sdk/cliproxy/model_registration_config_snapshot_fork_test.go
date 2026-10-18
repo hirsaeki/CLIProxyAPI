@@ -36,8 +36,10 @@ func TestPluginModelRegistrationUsesCapturedConfigFork(t *testing.T) {
 				},
 			}
 			captured.ForceModelPrefix = true
+			// Keep exclusions current so the publication fence accepts this result;
+			// aliases, settings and prefixes must still use the captured snapshot.
 			current := &config.Config{
-				OAuthExcludedModels: map[string][]string{provider: {native[0].ID}},
+				OAuthExcludedModels: map[string][]string{provider: {native[1].ID}},
 				OAuthModelAlias: map[string][]config.OAuthModelAlias{
 					provider: {{Name: native[0].ID, Alias: "current-alias"}},
 				},
@@ -154,5 +156,26 @@ func TestPluginNativeCandidatesUseCapturedOverridesFork(t *testing.T) {
 	models := reg.GetModelsForClient(auth.ID)
 	if len(models) != 1 || models[0].ID != "tenant/captured-model" || models[0].Thinking == nil || models[0].Thinking.Max != 4096 {
 		t.Fatalf("registered models = %#v, want captured override and forced prefix", models)
+	}
+}
+
+func TestPluginModelRegistrationRejectsObsoleteExclusionsFork(t *testing.T) {
+	for _, provider := range []string{"custom-provider", "vertex", "antigravity"} {
+		t.Run(provider, func(t *testing.T) {
+			svc, auth := publicationFixtureFork(t, provider, nil)
+			captured := svc.cfg
+			captured.OAuthExcludedModels = map[string][]string{provider: {"blocked-model"}}
+			svc.cfg = &config.Config{OAuthExcludedModels: map[string][]string{provider: {"safe-model"}}}
+			calls := 0
+			setPublicationResolverFork(t, func(_ *pluginhost.Host, _ context.Context, _ *coreauth.Auth, candidates []*ModelInfo) pluginhost.AuthModelResult {
+				calls++
+				checkPublicationCandidatesFork(t, provider, candidates)
+				return pluginhost.AuthModelResult{Provider: provider, Handled: true, Models: []*ModelInfo{{ID: "safe-model"}}}
+			})
+			accepted := svc.registerModelsForAuthWithConfigAndCache(t.Context(), captured, auth, nil)
+			if accepted || calls != 1 || len(GlobalModelRegistry().GetModelsForClient(auth.ID)) != 0 {
+				t.Fatalf("obsolete exclusions published: accepted=%v, plugin calls=%d", accepted, calls)
+			}
+		})
 	}
 }

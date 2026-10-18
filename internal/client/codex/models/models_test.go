@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/testutil/forkcatalog"
 )
 
 func TestCodexClientModelsResponse_InputModalitiesFromRegistry(t *testing.T) {
@@ -173,6 +174,7 @@ func TestCodexClientModelsResponse_RewritesTemplateMultiAgentVersionWhenEnabled(
 }
 
 func TestCodexClientModelsResponse_DisablesSearchToolForSynthesizedModels(t *testing.T) {
+	defer forkcatalog.UseLegacyCodex(t)()
 	resp := BuildResponse([]map[string]any{
 		{"id": "custom-openai-compatible-model"},
 		{"id": "gpt-5.5"},
@@ -475,6 +477,7 @@ func TestApplyCodexClientModelMetadataPreservesMultiAgentVersionWhenDisabled(t *
 }
 
 func TestCodexClientModelsResponseAppliesMaxContextLengthOverride(t *testing.T) {
+	defer forkcatalog.UseLegacyCodex(t)()
 	const wantOverride = 1048576
 	const wantDefault = 272000
 
@@ -902,6 +905,7 @@ func TestCodexClientModelsResponse_ExplicitRouteOverridesHonored(t *testing.T) {
 }
 
 func TestCodexClientModelsResponse_UnrelatedCustomProviderRetainsFallback(t *testing.T) {
+	defer forkcatalog.UseLegacyCodex(t)()
 	modelRegistry := registry.GetGlobalRegistry()
 	clientID := "codex-unrelated-custom-provider-test-client"
 	modelRegistry.RegisterClient(clientID, "openai-compatibility", []*registry.ModelInfo{
@@ -1532,6 +1536,7 @@ func assertCPAWebSearchCapability(t *testing.T, model map[string]any, want bool,
 }
 
 func TestCodexClientModelsResponse_DevinDisplayName(t *testing.T) {
+	defer forkcatalog.UseLegacyCodex(t)()
 	availableModels := []map[string]any{
 		// 1. Template Devin model with explicit display_name
 		{
@@ -1670,6 +1675,7 @@ func TestMarshalCompactJSONIsSingleLine(t *testing.T) {
 }
 
 func TestCodexClientModelsResponse_NonTemplateCatalogStaysWithinOneMiB(t *testing.T) {
+	defer forkcatalog.UseLegacyCodex(t)()
 	ids := []string{
 		"gpt-6-astra",
 		"gpt-6-sol",
