@@ -96,7 +96,7 @@ jobs:
             -run 'Fork$|OAuth.*Availability|AvailabilityFallback|TestForkConfigCommit|Native.*Candidates|CandidateModels|ModelProvider|PluginDiscovery|AntigravityCachedRegistration|Issue6583|Issue6559' \
             -count=1 -timeout=5m
           go test -race ./sdk/cliproxy \
-            -run '^Test(ModelRegistration|PluginRegistration)' -count=20 -timeout=5m
+            -run '^Test(ModelRegistration|PluginRegistration|CodexExcludedModelsCredentialPriorityAfterPatchAndReload$)' -count=20 -timeout=5m
           gofmt -d internal/config/config.go internal/config/config_load.go \
             internal/api/handlers/management/config_source_rewrite_fork_test.go > "$RUNNER_TEMP/config-source-gofmt.diff"
           cat "$RUNNER_TEMP/config-source-gofmt.diff"

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -27,6 +28,9 @@ func TestCodexExcludedModelsCredentialPriorityAfterPatchAndReload(t *testing.T) 
 	sctx := &synthesizer.SynthesisContext{Config: cfg, AuthDir: cfg.AuthDir, Now: time.Now(), IDGenerator: synthesizer.NewStableIDGenerator()}
 	load := func(raw string) *coreauth.Auth {
 		t.Helper()
+		if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+			t.Fatal(err)
+		}
 		auths, err := synthesizer.SynthesizeAuthFile(sctx, path, []byte(raw))
 		if err != nil || len(auths) != 1 {
 			t.Fatalf("synthesis: %v, count=%d", err, len(auths))
@@ -35,8 +39,10 @@ func TestCodexExcludedModelsCredentialPriorityAfterPatchAndReload(t *testing.T) 
 	}
 	auth := load(`{"type":"codex"}`)
 	defer registry.GetGlobalRegistry().UnregisterClient(auth.ID)
-	if _, err := manager.Register(context.Background(), auth); err != nil {
+	if registered, err := manager.Register(context.Background(), auth); err != nil {
 		t.Fatal(err)
+	} else if registered == nil {
+		t.Fatal("registration rejected the current auth file snapshot")
 	}
 	hook := service.runtimeAuthSyncHook()
 	sync := func(auth *coreauth.Auth) {
