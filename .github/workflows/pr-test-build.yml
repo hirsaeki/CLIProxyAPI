@@ -110,8 +110,8 @@ jobs:
             ./internal/translator/claude/openai/responses \
             -run 'ConfigurationUpdate|HasThinkingSuffix|PinsRequestPerStream' -count=1 -timeout=5m
           go test -race ./sdk/pluginabi -count=1 -timeout=5m
-          go test -race ./sdk/cliproxy ./sdk/cliproxy/auth ./internal/watcher/synthesizer \
-            -run 'SourceFileSnapshot.*Fork$|PersistedAuthSurvivesPreHookWatcherSnapshotFork$' -count=20 -timeout=5m
+          go test -race ./sdk/cliproxy ./sdk/cliproxy/auth ./internal/watcher ./internal/watcher/synthesizer \
+            -run 'FileSnapshot|PersistedAuthSurvivesPreHookWatcherSnapshotFork$' -count=20 -timeout=5m
           go test -race ./sdk/cliproxy \
             -run '^TestPutOpenAICompatConcurrentWithAuthFieldsPatch_Issue6559$' -count=10 -timeout=5m
           go test -race ./internal/runtime/executor \

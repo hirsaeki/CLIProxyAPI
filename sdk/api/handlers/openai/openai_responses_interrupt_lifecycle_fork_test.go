@@ -56,6 +56,15 @@ func TestResponsesTerminalFrameEndsLocalInterruptBeforeStreamCloseFork(t *testin
 			}
 			sendAndRead := func(event, responseID string) {
 				t.Helper()
+				// Filter telemetry without changing interrupt eligibility or hiding
+				// the next lifecycle event, including the next response.created.
+				select {
+				case data <- []byte(`{"type":"response.subscription_usage"}`):
+				case errFinished := <-finished:
+					t.Fatalf("forwarder ended before telemetry: %v", errFinished)
+				case <-time.After(5 * time.Second):
+					t.Fatal("timed out sending telemetry")
+				}
 				payload := []byte(fmt.Sprintf(`{"type":%q,"response":{"id":%q,"output":[]}}`, event, responseID))
 				select {
 				case data <- payload:
