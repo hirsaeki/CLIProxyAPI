@@ -273,3 +273,60 @@ func TestClaudeSSEPreflightKeepsInputBuffersFork(t *testing.T) {
 		t.Fatal("preflight modified an input buffer or accepted parser state")
 	}
 }
+
+func TestClaudeSSEBufferRetentionFork(t *testing.T) {
+	const retainLimit = 64 * 1024
+	largeLine := []byte(`data: {"type":"ping","padding":"` + strings.Repeat("x", retainLimit+1) + `"}`)
+	for _, atEOF := range []bool{false, true} {
+		name := "event boundary"
+		if atEOF {
+			name = "pending line at EOF"
+		}
+		t.Run(name, func(t *testing.T) {
+			state := claudeBoundedStateFork(len(largeLine) + 2)
+			// Retain an incomplete large line across chunks until it can be parsed.
+			state.ObserveChunk(largeLine[:len(largeLine)/2])
+			state.ObserveChunk(largeLine[len(largeLine)/2:])
+			if state.bufferError != nil || state.lineBuf.Len() != len(largeLine) || state.lineBuf.Cap() <= retainLimit {
+				t.Fatalf("large partial line was not retained: error=%v len=%d cap=%d", state.bufferError, state.lineBuf.Len(), state.lineBuf.Cap())
+			}
+			if atEOF {
+				state.FlushPendingLine()
+			} else {
+				state.ObserveChunk([]byte("\n"))
+				if state.lineBuf.Cap() != 0 || state.eventData.Len() <= retainLimit {
+					t.Fatalf("complete line storage was not released or pending event lost: line cap=%d data len=%d", state.lineBuf.Cap(), state.eventData.Len())
+				}
+				state.ObserveChunk([]byte("\n"))
+			}
+			if state.bufferError != nil || state.lineBuf.Len() != 0 || state.eventData.Len() != 0 || state.lineBuf.Cap() > retainLimit || state.eventData.Cap() != 0 {
+				t.Fatalf("large completed event retained storage: error=%v line len/cap=%d/%d data len/cap=%d/%d", state.bufferError, state.lineBuf.Len(), state.lineBuf.Cap(), state.eventData.Len(), state.eventData.Cap())
+			}
+		})
+	}
+
+	t.Run("small buffers are reused", func(t *testing.T) {
+		state := claudeBoundedStateFork(1024)
+		line := []byte(`data: {"type":"ping"}`)
+		state.ObserveChunk(line)
+		lineStorage, lineCapacity := &state.lineBuf.Bytes()[0], state.lineBuf.Cap()
+		state.ObserveChunk([]byte("\n"))
+		dataStorage, dataCapacity := &state.eventData.Bytes()[0], state.eventData.Cap()
+		state.ObserveChunk([]byte("\n"))
+		if state.lineBuf.Cap() != lineCapacity || state.eventData.Cap() != dataCapacity {
+			t.Fatal("reset released a small reusable buffer")
+		}
+		state.ObserveChunk(line)
+		if &state.lineBuf.Bytes()[0] != lineStorage {
+			t.Fatal("small line buffer was reallocated")
+		}
+		state.ObserveChunk([]byte("\n"))
+		if &state.eventData.Bytes()[0] != dataStorage {
+			t.Fatal("small event data buffer was reallocated")
+		}
+		state.ObserveChunk([]byte("\n"))
+		if state.bufferError != nil || state.lineBuf.Cap() != lineCapacity || state.eventData.Cap() != dataCapacity {
+			t.Fatal("small buffer reuse changed parsing or retained capacity")
+		}
+	})
+}

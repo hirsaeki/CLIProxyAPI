@@ -18,3 +18,13 @@ func appendClaudeSSELine(event *bytes.Buffer, line []byte, limit int) bool {
 	event.WriteByte('\n')
 	return true
 }
+
+// ResetClaudeSSEBuffer avoids retaining a large event for an entire live stream.
+// Keep small allocations reusable without keeping the maximum event capacity.
+func ResetClaudeSSEBuffer(buffer *bytes.Buffer) {
+	if buffer.Cap() > 64*1024 {
+		*buffer = bytes.Buffer{}
+		return
+	}
+	buffer.Reset()
+}

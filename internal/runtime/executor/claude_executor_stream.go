@@ -384,7 +384,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 				}
 				observeClaudeSSEEvent(event.Bytes(), &upstreamMessageID, &upstreamCompleted, &upstreamStreamErr)
 				cloned := bytes.Clone(event.Bytes())
-				event.Reset()
+				helps.ResetClaudeSSEBuffer(&event)
 				select {
 				case out <- cliproxyexecutor.StreamChunk{Payload: cloned}:
 					return true
@@ -467,7 +467,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 			}
 			if len(bytes.TrimSpace(line)) == 0 {
 				observeClaudeSSEEvent(eventBuf.Bytes(), &upstreamMessageID, &upstreamCompleted, &upstreamStreamErr)
-				eventBuf.Reset()
+				helps.ResetClaudeSSEBuffer(&eventBuf)
 			}
 			helps.AppendAPIResponseChunk(ctx, e.cfg, line)
 			reporter.ObserveResponseModel(line)
@@ -511,7 +511,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 		}
 		if eventBuf.Len() > 0 {
 			observeClaudeSSEEvent(eventBuf.Bytes(), &upstreamMessageID, &upstreamCompleted, &upstreamStreamErr)
-			eventBuf.Reset()
+			helps.ResetClaudeSSEBuffer(&eventBuf)
 		}
 		if helps.EndApplyPatchStream(ctx, param, reporter, out, statusErr{code: http.StatusBadGateway, msg: helps.ApplyPatchUpstreamErrorMessage}) {
 			return

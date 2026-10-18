@@ -24,6 +24,7 @@ import (
 	. "github.com/router-for-me/CLIProxyAPI/v8/internal/constant"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	log "github.com/sirupsen/logrus"
@@ -373,7 +374,7 @@ func (s *claudeSSEStreamState) ObserveChunk(chunk []byte) {
 		s.eventBytes++
 		if b == '\n' {
 			s.observeLine(s.lineBuf.Bytes())
-			s.lineBuf.Reset()
+			helps.ResetClaudeSSEBuffer(&s.lineBuf)
 			continue
 		}
 		s.lineBuf.WriteByte(b)
@@ -387,7 +388,7 @@ func (s *claudeSSEStreamState) FlushPendingLine() {
 	}
 	if s.lineBuf.Len() > 0 {
 		s.observeLine(s.lineBuf.Bytes())
-		s.lineBuf.Reset()
+		helps.ResetClaudeSSEBuffer(&s.lineBuf)
 	}
 	s.flushEventData()
 }
@@ -398,7 +399,7 @@ func (s *claudeSSEStreamState) flushEventData() {
 		if len(joined) > 0 && gjson.ValidBytes(joined) {
 			s.observeJSONPayload(joined, true)
 		}
-		s.eventData.Reset()
+		helps.ResetClaudeSSEBuffer(&s.eventData)
 	}
 }
 

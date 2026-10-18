@@ -373,7 +373,9 @@ Keep the 50 MiB whole-event limit in `helps/claude_sse_limit_fork.go`, matching 
 existing scanner ceiling. Native and translated executor paths must reject before
 appending, report failed usage, close the body, and skip successful continuity
 publication. The handler observer uses a single bounded data buffer plus a bounded
-partial line; per-line slices would retain unbounded allocation overhead. Its
+partial line; per-line slices would retain unbounded allocation overhead. Completed
+line/event buffers above 64 KiB are released rather than retained for a long-lived
+stream; small buffers remain reusable. Its
 fork-owned helper rejects the first chunk before committing headers and later
 chunks through the existing `ChunkError` hook. A withheld chunk must not advance
 written-newline or terminal state. Overflow emits one sanitized error, never a
