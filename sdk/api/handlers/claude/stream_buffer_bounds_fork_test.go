@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -254,5 +255,21 @@ func TestClaudeSSEPreflightSplitWhitespaceBoundaryFork(t *testing.T) {
 	state.ObserveChunk([]byte("x"))
 	if state.bufferError == nil {
 		t.Fatal("over-limit byte after the split boundary was accepted")
+	}
+}
+
+func TestClaudeSSEPreflightKeepsInputBuffersFork(t *testing.T) {
+	state := claudeBoundedStateFork(64)
+	state.ObserveChunk([]byte("data: x\n\xe2"))
+	partial := bytes.Clone(state.lineBuf.Bytes())
+	data := bytes.Clone(state.eventData.Bytes())
+	count := state.eventBytes
+	chunk := []byte("\x80\x83\ndata: y\n")
+	original := bytes.Clone(chunk)
+	if !state.preflightSSEChunkFork(chunk) {
+		t.Fatal("valid preflight was rejected")
+	}
+	if !bytes.Equal(chunk, original) || !bytes.Equal(state.lineBuf.Bytes(), partial) || !bytes.Equal(state.eventData.Bytes(), data) || state.eventBytes != count {
+		t.Fatal("preflight modified an input buffer or accepted parser state")
 	}
 }

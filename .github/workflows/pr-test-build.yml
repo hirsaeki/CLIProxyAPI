@@ -108,6 +108,7 @@ jobs:
             sdk/api/handlers/openai/openai_responses_interrupt_lifecycle_fork_test.go > "$RUNNER_TEMP/fork-gofmt.diff" || { cat "$RUNNER_TEMP/fork-gofmt.diff"; exit 1; }
           cat "$RUNNER_TEMP/fork-gofmt.diff"
           test ! -s "$RUNNER_TEMP/fork-gofmt.diff"
+          go test ./internal/util -run '^Test(NoInPlaceSJSONWrites|InPlaceByteWritesAreReviewed)$' -count=1
           go test -race ./sdk/cliproxy ./internal/watcher ./internal/pluginhost \
             -run 'Fork$|OAuth.*Availability|AvailabilityFallback|TestForkConfigCommit|Native.*Candidates|CandidateModels|ModelProvider|PluginDiscovery|AntigravityCachedRegistration|Issue6583|Issue6559' \
             -count=1 -timeout=5m

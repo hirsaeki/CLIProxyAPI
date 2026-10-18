@@ -46,9 +46,9 @@ func (s *claudeSSEStreamState) preflightSSEChunkFork(chunk []byte) bool {
 		}
 		line := chunk[:newline]
 		if len(partialLine) > 0 {
-			combined := make([]byte, len(partialLine)+len(line))
-			copy(combined, partialLine)
-			copy(combined[len(partialLine):], line)
+			combined := make([]byte, 0, len(partialLine)+len(line))
+			combined = append(combined, partialLine...)
+			combined = append(combined, line...)
 			line = combined
 		}
 		if len(bytes.TrimSpace(line)) == 0 {
