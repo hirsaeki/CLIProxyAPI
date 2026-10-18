@@ -373,7 +373,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 		// If the response target is Claude, directly forward complete SSE events without translation.
 		if responseFormat == to {
 			scanner := bufio.NewScanner(decodedBody)
-			scanner.Buffer(nil, 52_428_800) // 50MB
+			scanner.Buffer(nil, helps.MaxClaudeSSEEventBytes)
 			var event bytes.Buffer
 			var upstreamMessageID string
 			var upstreamStreamErr error
@@ -403,8 +403,10 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 					return
 				}
 				line = e.restoreResponseModel(restoredLine, req.Model)
-				event.Write(line)
-				event.WriteByte('\n')
+				if !helps.AppendClaudeSSELine(&event, line) {
+					emitResponseError(statusErr{code: http.StatusBadGateway, msg: "upstream SSE event exceeds maximum size"})
+					return
+				}
 				if len(bytes.TrimSpace(line)) == 0 {
 					if !flushEvent() {
 						emitCancellation(ctx.Err())
@@ -450,7 +452,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 
 		// For other formats, use translation
 		scanner := bufio.NewScanner(decodedBody)
-		scanner.Buffer(nil, 52_428_800) // 50MB
+		scanner.Buffer(nil, helps.MaxClaudeSSEEventBytes)
 		var param any
 		helps.InitializeApplyPatchStream(ctx, to, responseFormat, req.Model, helps.ApplyPatchOriginalRequest(req, opts), bodyForTranslation, &param)
 		var upstreamMessageID string
@@ -459,8 +461,10 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 		upstreamCompleted := false
 		for scanner.Scan() {
 			line := scanner.Bytes()
-			eventBuf.Write(line)
-			eventBuf.WriteByte('\n')
+			if !helps.AppendClaudeSSELine(&eventBuf, line) {
+				emitResponseError(statusErr{code: http.StatusBadGateway, msg: "upstream SSE event exceeds maximum size"})
+				return
+			}
 			if len(bytes.TrimSpace(line)) == 0 {
 				observeClaudeSSEEvent(eventBuf.Bytes(), &upstreamMessageID, &upstreamCompleted, &upstreamStreamErr)
 				eventBuf.Reset()

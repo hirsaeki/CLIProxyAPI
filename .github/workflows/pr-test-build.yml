@@ -83,6 +83,13 @@ jobs:
             sdk/cliproxy/service_excluded_models_priority_test.go \
             sdk/cliproxy/compat_plugin_exclusions_fork_test.go \
             internal/discovery/zeroconf.go internal/discovery/host_probe_datagram_fork_test.go \
+            internal/runtime/executor/claude_executor_stream.go \
+            internal/runtime/executor/claude_sse_limit_fork_test.go \
+            internal/runtime/executor/helps/claude_sse_limit_fork.go \
+            internal/runtime/executor/helps/claude_sse_limit_fork_test.go \
+            sdk/api/handlers/claude/code_handlers.go \
+            sdk/api/handlers/claude/stream_buffer_bounds_fork.go \
+            sdk/api/handlers/claude/stream_buffer_bounds_fork_test.go \
             internal/testutil/forkcatalog/codex_catalog_fork.go \
             internal/testutil/forkcatalog/codex_catalog_fork_test.go \
             internal/api/server_apply_patch_config_test.go internal/api/server_multi_agent_config_test.go \
@@ -106,6 +113,10 @@ jobs:
             -count=1 -timeout=5m
           go test -race ./sdk/cliproxy \
             -run '^Test(ModelRegistration|PluginRegistration|CodexExcludedModelsCredentialPriorityAfterPatchAndReload$)' -count=20 -timeout=5m
+          go test -race ./internal/runtime/executor/helps ./sdk/api/handlers/claude \
+            -run 'TestClaudeSSE.*Fork|TestClaudeStream.*Overflow.*Fork' -count=20 -timeout=5m
+          go test -race ./internal/runtime/executor \
+            -run '^TestClaudeExecutorSSEEventLimitFork$' -count=1 -timeout=5m
           go test -race ./internal/testutil/forkcatalog -count=20 -timeout=5m
           go test -race ./internal/discovery ./sdk/cliproxy \
             -run '^(TestHostProbeReceivesLargeConflictDatagramFork|TestCompatStaticPluginExclusionsFork)$' -count=20 -timeout=5m

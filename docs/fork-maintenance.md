@@ -77,6 +77,8 @@ them must stay local to the listed responsibility.
 | `sdk/cliproxy/builder.go` | Load and inject the startup availability snapshot |
 | `sdk/cliproxy/service_config.go` | Warn when a startup-only availability path changes |
 | `sdk/cliproxy/service_models.go` | Pass native candidates through the fork model-registration seam and preserve static-plugin exclusions in compatible-provider branches |
+| `internal/runtime/executor/claude_executor_stream.go` | Bound complete native and translated Claude SSE events through the fork-owned helper before appending, preserving failed usage on overflow |
+| `sdk/api/handlers/claude/code_handlers.go` | Bound partial lines and multi-line SSE events through the fork-owned observer state and existing `ChunkError` hook, including the first chunk before headers |
 | `internal/discovery/zeroconf.go` | Keep the host-conflict probe receive buffer large enough for complete mDNS datagrams until the upstream buffer fix lands |
 | `sdk/cliproxy/service_executors.go` | Pass candidates to per-auth plugin model resolution |
 | `internal/util/gemini_schema.go` | Preserve explicit all-false unions and scope union traversal to schema positions until the generic upstream fix lands |
@@ -363,3 +365,23 @@ arbitrary external file writers. Regressions cover real save ordering, accountin
 clone/serialization behavior, canonical formatting equivalence, and
 full-scan/single-file/plugin synthesis paths. Retire the remaining Register seam
 when upstream adds equivalent registration validation.
+
+## Claude SSE event bounds
+
+The scanner's per-line limit does not bound an event containing many short lines.
+Keep the 50 MiB whole-event limit in `helps/claude_sse_limit_fork.go`, matching the
+existing scanner ceiling. Native and translated executor paths must reject before
+appending, report failed usage, close the body, and skip successful continuity
+publication. The handler observer uses a single bounded data buffer plus a bounded
+partial line; per-line slices would retain unbounded allocation overhead. Its
+fork-owned helper rejects the first chunk before committing headers and later
+chunks through the existing `ChunkError` hook. A withheld chunk must not advance
+written-newline or terminal state. Overflow emits one sanitized error, never a
+synthetic successful terminator. These narrow upstream-file seams are needed
+because the existing scanner and forwarder hooks alone do not bound parsing state.
+
+`TestClaudeExecutorSSEEventLimitFork` exercises native and translated overflow while
+the upstream stays open, including body closure and failed token accounting. The
+fork-owned helper/handler tests cover exact limits, resets, many short lines,
+unterminated lines, first-chunk handling, and single-error cancellation. Keep these
+alongside the upstream multiline, truncation, and terminal-state regressions.
