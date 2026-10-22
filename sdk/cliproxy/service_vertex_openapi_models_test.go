@@ -2,6 +2,8 @@ package cliproxy
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -83,9 +85,13 @@ func TestSynthesizeAuthFile_VertexModelsAndAliases(t *testing.T) {
 		"service_account": {"client_email": "sa@test.iam.gserviceaccount.com"}
 	}`)
 
+	path := filepath.Join(t.TempDir(), "vertex-test.json")
+	if errWrite := os.WriteFile(path, rawJSON, 0o600); errWrite != nil {
+		t.Fatal(errWrite)
+	}
 	auths, errSynth := synthesizer.SynthesizeAuthFile(&synthesizer.SynthesisContext{
 		Now: time.Unix(1700000000, 0),
-	}, "/tmp/vertex-test.json", rawJSON)
+	}, path, rawJSON)
 	if errSynth != nil {
 		t.Fatalf("SynthesizeAuthFile error: %v", errSynth)
 	}

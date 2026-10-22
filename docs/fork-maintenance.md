@@ -47,7 +47,10 @@ reuse alongside the fork's synchronous-call and Vertex plugin runtime checks.
 
 The Vertex multi-region endpoint regression test is fork-owned:
 `internal/runtime/executor/gemini_vertex_endpoint_fork_test.go`. Keep it separate
-from upstream's `gemini_vertex_executor_test.go`.
+from upstream's `gemini_vertex_executor_test.go`, including its test function name.
+Upstream now supports case-insensitive global and us/eu multi-region endpoints;
+use that implementation without a fork production delta and retain the fork
+regression for default, trimmed, global, and ordinary regional locations.
 
 Current model-discovery and availability files include:
 
@@ -270,6 +273,12 @@ Their only local changes register deterministic capability fixtures through
 upstream test corrections preserve every assertion and avoid changing production
 thinking behavior, model catalogs, or local overlays. Remove the helper and its
 two call sites when upstream makes the tests independent of catalog retirement.
+
+The Vertex synthesized-auth model test writes its source fixture into a temporary
+file before registration. The fork's new-registration provenance fence must be
+able to validate the same bytes supplied to the synthesizer. Keep the production
+fence and all alias assertions; this test-only fixture correction can be removed
+when upstream adopts it.
 
 The WebSocket retry-bind test assigns server connection ordinals before sending
 the upgrade handshake. This prevents a fast retry from being mistaken for the
