@@ -82,6 +82,7 @@ them must stay local to the listed responsibility.
 | `sdk/cliproxy/service_models.go` | Pass native candidates through the fork model-registration seam and preserve static-plugin exclusions in compatible-provider branches |
 | `internal/runtime/executor/claude_executor_stream.go` | Bound complete native and translated Claude SSE events through the fork-owned helper before appending, preserving failed usage on overflow |
 | `sdk/api/handlers/claude/code_handlers.go` | Bound partial lines and multi-line SSE events through the fork-owned observer state and existing `ChunkError` hook, including the first chunk before headers |
+| `internal/home/cluster_balance.go` | Close dedicated rebalance sockets before Redis pool shutdown so heartbeat cancellation interrupts blocked RPCs |
 | `internal/discovery/zeroconf.go` | Keep the host-conflict probe receive buffer large enough for complete mDNS datagrams until the upstream buffer fix lands |
 | `sdk/cliproxy/service_executors.go` | Pass candidates to per-auth plugin model resolution |
 | `internal/util/gemini_schema.go` | Preserve explicit all-false unions and scope union traversal to schema positions until the generic upstream fix lands |
@@ -240,6 +241,18 @@ go build -o test-output ./cmd/server && rm test-output
 ```
 
 ## Upstream Contribution Candidates
+
+Home rebalance commands use a dedicated Redis client so cancellation cannot
+interrupt issued dispatches. go-redis pool shutdown can probe an active socket
+before closing it and block behind its pending read on Linux. The narrow
+`cluster_balance.go` seam closes only that command's sockets before closing its
+pool, using `rebalance_transport_cancellation_fork.go` to fence late dial
+completion and serialize shutdown. It binds detached Redis dial contexts to the
+command lifetime and reuses Home's context-aware TLS dialer and
+raw-socket closer. No post-connection deadline is added. This is
+a generic upstream correction candidate; remove the seam/helper when upstream
+provides equivalent prompt cancellation. Retain the blocked-RPC heartbeat tests
+and the fork regressions for interrupted, concurrent, late-dial and TLS shutdown.
 
 The highest-value upstream contribution is a generic per-auth model candidate
 resolver seam. It should let a model provider receive the native candidates and

@@ -8,6 +8,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/redis/go-redis/v9"
 	log "github.com/sirupsen/logrus"
@@ -58,12 +59,18 @@ func (c *Client) rebalanceCommand(ctx context.Context, address string, args ...a
 	}
 	options.ReadTimeout = -1
 	options.WriteTimeout = -1
-	options.Dialer = redis.NewDialer(options)
+	// Reuse Home's context-aware dialer so TLS negotiation is cancelled too.
+	transport := newRebalanceTransport(ctx, pluginSyncDialer(options))
+	options.Dialer = transport.DialContext
 	command := redis.NewClient(options)
-	stopCancel := context.AfterFunc(ctx, func() { _ = command.Close() })
+	closeCommand := sync.OnceValue(func() error {
+		transport.Close()
+		return command.Close()
+	})
+	stopCancel := context.AfterFunc(ctx, func() { _ = closeCommand() })
 	defer func() {
 		stopCancel()
-		if errClose := command.Close(); errClose != nil && ctx.Err() == nil {
+		if errClose := closeCommand(); errClose != nil && ctx.Err() == nil {
 			log.Debugf("Home rebalance transport close failed: %v", errClose)
 		}
 	}()
