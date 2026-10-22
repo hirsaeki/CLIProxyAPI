@@ -2,13 +2,14 @@ package executor
 
 import "testing"
 
-func TestVertexBaseURL(t *testing.T) {
+func TestVertexBaseURLFork(t *testing.T) {
 	tests := []struct {
 		name     string
 		location string
 		want     string
 	}{
 		{name: "default", location: "", want: "https://us-central1-aiplatform.googleapis.com"},
+		{name: "mixed-case global", location: " GlObAl ", want: "https://aiplatform.googleapis.com"},
 		{name: "global", location: "global", want: "https://aiplatform.googleapis.com"},
 		{name: "US multi-region", location: "us", want: "https://aiplatform.us.rep.googleapis.com"},
 		{name: "EU multi-region", location: "eu", want: "https://aiplatform.eu.rep.googleapis.com"},

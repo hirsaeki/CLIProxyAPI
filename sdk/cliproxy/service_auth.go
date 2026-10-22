@@ -438,7 +438,7 @@ func (s *Service) prepareCoreAuthForModelRegistration(ctx context.Context, auth 
 				auth.Metadata[antigravityPersistedHintsMetaKey] = persistedHints
 			}
 		}
-		if !existing.Disabled && existing.Status != coreauth.StatusDisabled && !auth.Disabled && auth.Status != coreauth.StatusDisabled {
+		if !auth.HasFileSnapshot() && !existing.Disabled && existing.Status != coreauth.StatusDisabled && !auth.Disabled && auth.Status != coreauth.StatusDisabled {
 			auth.LastRefreshedAt = existing.LastRefreshedAt
 			auth.NextRefreshAfter = existing.NextRefreshAfter
 			if len(auth.ModelStates) == 0 && len(existing.ModelStates) > 0 {
@@ -447,8 +447,13 @@ func (s *Service) prepareCoreAuthForModelRegistration(ctx context.Context, auth 
 		}
 		op = "update"
 		committed, err = s.coreManager.Update(ctx, auth)
-		if err == nil && committed != nil && committed.Generation == existing.Generation {
+		if err == nil && committed != nil && (auth.HasFileSnapshot() || committed.Generation == existing.Generation) {
 			log.Debugf("skipping stale auth update for %s: incoming snapshot did not advance generation (gen=%d)", auth.ID, existing.Generation)
+			if auth.HasFileSnapshot() {
+				if w := s.currentWatcher(); w != nil {
+					w.RereadDiscardedFileSnapshot(auth)
+				}
+			}
 			// Reconcile executor bindings only from the manager's current state.
 			s.ensureExecutorsForAuthWithContext(ctx, committed, false)
 			return committed

@@ -127,7 +127,7 @@ func TestPersistedAuthSurvivesPreHookWatcherSnapshotFork(t *testing.T) {
 // same ordering protects the plugin-candidate path, which may unregister a
 // current native compatibility executor when the stale auth lacks base_url.
 func TestSourceFileSnapshotExecutorRegistrationUsesReconciledAuthFork(t *testing.T) {
-	for _, mode := range []string{"rejected-update", "rejected-add", "valid-add", "stale-generation"} {
+	for _, mode := range []string{"rejected-update", "rejected-add", "valid-add", "valid-update", "stale-generation"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx := coreauth.WithSkipPersist(context.Background())
 			path := filepath.Join(t.TempDir(), "executor-ordering.json")
@@ -139,9 +139,13 @@ func TestSourceFileSnapshotExecutorRegistrationUsesReconciledAuthFork(t *testing
 			service := &Service{cfg: &config.Config{}, coreManager: manager}
 			incoming := &coreauth.Auth{ID: "executor-ordering", Provider: "claude", Status: coreauth.StatusActive}
 			incoming.SetSourceFileSnapshot(path, raw)
+			var reread *coreauth.Auth
+			service.watcher = &WatcherWrapper{rereadDiscardedFileSnapshot: func(auth *coreauth.Auth) {
+				reread = auth.Clone()
+			}}
 			var current *coreauth.Auth
 			var err error
-			if mode == "rejected-update" || mode == "stale-generation" {
+			if mode == "rejected-update" || mode == "valid-update" || mode == "stale-generation" {
 				current, err = manager.Register(ctx, &coreauth.Auth{ID: incoming.ID, Provider: "codex", Status: coreauth.StatusActive})
 				if err != nil {
 					t.Fatal(err)
@@ -156,14 +160,21 @@ func TestSourceFileSnapshotExecutorRegistrationUsesReconciledAuthFork(t *testing
 				}
 			}
 			before, hadExecutor := manager.Executor("codex")
-			if mode != "valid-add" {
+			if mode != "valid-add" && mode != "valid-update" {
 				if err := os.WriteFile(path, []byte(`{"type":"codex"}`), 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}
 			prepared := service.prepareCoreAuthForModelRegistration(ctx, incoming)
 			_, hasIncomingExecutor := manager.Executor("claude")
-			if mode == "valid-add" {
+			if mode == "rejected-update" {
+				if reread == nil || !reread.SameFileSnapshot(incoming) {
+					t.Fatal("rejected update did not request rereading the discarded snapshot")
+				}
+			} else if reread != nil {
+				t.Fatal("accepted or generation-stale auth unexpectedly requested a snapshot reread")
+			}
+			if mode == "valid-add" || mode == "valid-update" {
 				if prepared == nil || prepared.Provider != "claude" || prepared.Generation == 0 || !hasIncomingExecutor {
 					t.Fatal("accepted auth did not receive an executor after reconciliation")
 				}
