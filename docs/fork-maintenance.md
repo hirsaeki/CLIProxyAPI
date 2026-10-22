@@ -280,6 +280,12 @@ able to validate the same bytes supplied to the synthesizer. Keep the production
 fence and all alias assertions; this test-only fixture correction can be removed
 when upstream adopts it.
 
+The Git-store corruption fixture closes its repack repository before deleting
+packfiles and verifies corruption through a newly opened repository. go-git's
+pack-handle cache can otherwise keep an unlinked pack readable. This test-only
+compatibility correction preserves every fail-closed recovery and file-preservation
+assertion after the go-git dependency update; remove it when upstream adopts it.
+
 The WebSocket retry-bind test assigns server connection ordinals before sending
 the upgrade handshake. This prevents a fast retry from being mistaken for the
 connection the fixture intentionally closes. The test-only correction retains

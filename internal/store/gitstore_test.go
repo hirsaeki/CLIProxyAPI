@@ -1799,13 +1799,21 @@ func corruptGitRepository(t *testing.T, repoDir string) {
 		t.Fatalf("open repository before corruption: %v", errOpen)
 	}
 	defer func() {
-		if errClose := repo.Close(); errClose != nil {
-			t.Errorf("close corrupted repository: %v", errClose)
+		if repo != nil {
+			if errClose := repo.Close(); errClose != nil {
+				t.Errorf("close corrupted repository: %v", errClose)
+			}
 		}
 	}()
 	if errRepack := repo.RepackObjects(&git.RepackConfig{}); errRepack != nil {
 		t.Fatalf("repack repository objects: %v", errRepack)
 	}
+	// Release go-git's pack handles before removing files. A warm handle can
+	// still read an unlinked pack, so corruption must be checked through a new repository.
+	if errClose := repo.Close(); errClose != nil {
+		t.Fatalf("close repository before corruption: %v", errClose)
+	}
+	repo = nil
 	objectsDir := filepath.Join(repoDir, ".git", "objects")
 	objectEntries, errReadDir := os.ReadDir(objectsDir)
 	if errReadDir != nil {
@@ -1829,6 +1837,10 @@ func corruptGitRepository(t *testing.T, repoDir string) {
 		if errRemove := os.Remove(packfile); errRemove != nil {
 			t.Fatalf("remove packfile %s: %v", filepath.Base(packfile), errRemove)
 		}
+	}
+	repo, errOpen = git.PlainOpen(repoDir)
+	if errOpen != nil {
+		t.Fatalf("reopen corrupted repository: %v", errOpen)
 	}
 	if errVerify := verifyRepositoryHead(repo); !isRepositoryCorruptionError(errVerify) {
 		t.Fatalf("verifyRepositoryHead error = %v, want repository corruption", errVerify)
