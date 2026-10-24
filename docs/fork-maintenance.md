@@ -87,6 +87,8 @@ them must stay local to the listed responsibility.
 | `internal/util/gemini_schema.go` | Preserve explicit all-false unions and scope union traversal to schema positions until the generic upstream fix lands |
 | `internal/runtime/executor/antigravity_executor_request.go`, `antigravity_executor_tokens.go` | Reject unsupported false schemas after the final payload rules and before generation/count transport |
 | `sdk/api/handlers/openai/openai_responses_websocket_forward.go` | End local interrupt eligibility before publishing a terminal response, and reopen it for the next created response |
+| `internal/pluginhost/client_guard.go` | Keep native synchronous clients on the caller goroutine while claiming and releasing upstream call-completion hooks exactly once |
+| `internal/home/cluster_balance.go`, `cluster_latency.go` | Bind dedicated operation dial and TLS handshake cancellation to the owner context through the fork dial helper |
 | `internal/pluginhost/loader_windows.go` | Wrap the native loader with synchronous calls and route host callbacks through the fork bridge |
 | `internal/pluginhost/adapters.go` | Match explicit model-provider identifiers and transport candidate models |
 | `internal/pluginhost/rpc_schema.go` | Transport host features and model-provider identifiers over RPC |
@@ -280,11 +282,11 @@ able to validate the same bytes supplied to the synthesizer. Keep the production
 fence and all alias assertions; this test-only fixture correction can be removed
 when upstream adopts it.
 
-The Git-store corruption fixture closes its repack repository before deleting
-packfiles and verifies corruption through a newly opened repository. go-git's
-pack-handle cache can otherwise keep an unlinked pack readable. This test-only
-compatibility correction preserves every fail-closed recovery and file-preservation
-assertion after the go-git dependency update; remove it when upstream adopts it.
+Upstream now closes the Git-store corruption fixture's repack repository before
+deleting packfiles and verifies corruption through a newly opened repository.
+Use the upstream implementation without a fork test delta; it supersedes the
+fork correction for go-git's cached handles keeping unlinked packs readable.
+Preserve every fail-closed recovery and file-preservation assertion.
 
 The WebSocket retry-bind test assigns server connection ordinals before sending
 the upgrade handshake. This prevents a fast retry from being mistaken for the
@@ -402,3 +404,24 @@ the upstream stays open, including body closure and failed token accounting. The
 fork-owned helper/handler tests cover exact limits, resets, many short lines,
 unterminated lines, first-chunk handling, and single-error cancellation. Keep these
 alongside the upstream multiline, truncation, and terminal-state regressions.
+
+## Native plugin completion and Home cancellation
+
+The synchronous native plugin path cannot use the guard's worker goroutine: the
+Windows ABI and host callbacks require caller-goroutine execution. Claim upstream's
+call-completion hook before either dispatch path and defer its execution in the
+synchronous path, including error and panic exits. Cancellation or the adapter's
+fallback must not release decoded-auth body slots before the native call finishes.
+`client_guard_finish_fork_test.go` covers same-goroutine execution, exactly-once
+completion, cancellation, panic, errors, and rejected calls. The loader seam cannot
+perform this lifecycle work because the guard owns acquisition and completion.
+
+Upstream owns Home's established-connection cancellation wrapper and its TLS close
+ordering fix. Keep that implementation instead of a parallel fork transport
+registry. The dedicated rebalance and latency dial paths still need owner-bound
+TCP/TLS establishment: Redis may supply a detached dial context, and its default
+TLS dialer does not honor that context. The fork-owned helper uses the existing
+context-aware plugin sync dialer without adding post-connection deadlines. These
+local transport fixes do not change the Home wire protocol or require a matching
+CLIProxyAPIHome server change. Retire the two construction seams when upstream
+provides equivalent owner-bound handshake cancellation.

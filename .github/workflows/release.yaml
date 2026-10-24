@@ -15,7 +15,7 @@ concurrency:
 
 env:
   GH_REPO: ${{ github.repository }}
-  GO_VERSION: '1.26.4'
+  GO_VERSION: '1.26.10'
   LLVM_MINGW_VERSION: '20260616'
   LLVM_MINGW_SHA256: 'b9b68a4d276e16fa25802aaba458e4638f64b3884c290aaccdc2d87083b6ca35'
 
