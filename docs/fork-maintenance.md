@@ -288,6 +288,13 @@ Use the upstream implementation without a fork test delta; it supersedes the
 fork correction for go-git's cached handles keeping unlinked packs readable.
 Preserve every fail-closed recovery and file-preservation assertion.
 
+The three WebSocket keepalive-during-upload fixtures must observe Pong while the
+client payload hook is blocked, then wait for the complete request before sending
+a terminal response and closing the server socket. Releasing the hook only permits
+the write to begin; responding immediately creates a scheduler-dependent closed
+socket failure unrelated to keepalive behavior. Keep all Pong ordering assertions
+and the request-read barrier; retire this test-only delta when upstream adopts it.
+
 The WebSocket retry-bind test assigns server connection ordinals before sending
 the upgrade handshake. This prevents a fast retry from being mistaken for the
 connection the fixture intentionally closes. The test-only correction retains
