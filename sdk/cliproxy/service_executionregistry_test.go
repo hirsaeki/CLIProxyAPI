@@ -1256,8 +1256,8 @@ func TestServiceKeepsRegistryAcrossHeartbeatFailoverAndExposesOnlyAfterNewACK(t 
 	close(loseFirst)
 	select {
 	case <-secondSubscribe:
-	case <-time.After(time.Second):
-		t.Fatal("second subscription did not start after heartbeat loss")
+	case <-time.After(3 * homeSubscriberRetryInitial):
+		t.Fatal("second subscription did not start after heartbeat loss and backoff")
 	}
 	service.homeMu.Lock()
 	exposedRegistry := service.homeRegistry
@@ -1342,12 +1342,12 @@ func TestServicePreservesActiveScopeDuringPreACKFailoverRetries(t *testing.T) {
 	}
 	firstPreAck := <-preAckAttempts
 	secondPreAck := <-preAckAttempts
-	if retryDelay := secondPreAck.Sub(firstPreAck); retryDelay < 75*time.Millisecond {
-		t.Fatalf("pre-ACK retry delay = %v, want at least 75ms", retryDelay)
+	if retryDelay := secondPreAck.Sub(firstPreAck); retryDelay < homeSubscriberRetryInitial {
+		t.Fatalf("pre-ACK retry delay = %v, want at least %s after the prior published failure", retryDelay, homeSubscriberRetryInitial)
 	}
 	select {
 	case <-finalSubscribe:
-	case <-time.After(time.Second):
+	case <-time.After(5 * homeSubscriberRetryInitial):
 		t.Fatal("subscriber did not retry after pre-ACK rejections")
 	}
 	service.homeMu.Lock()
@@ -1434,6 +1434,10 @@ func TestServiceHeartbeatFailoverDoesNotDrainBlockingScope(t *testing.T) {
 	}
 	started := make(chan struct{})
 	release := make(chan struct{})
+	t.Cleanup(func() {
+		close(release)
+		scope.End("test cleanup")
+	})
 	if errBind := scope.Bind(func() error {
 		close(started)
 		<-release
@@ -1448,10 +1452,14 @@ func TestServiceHeartbeatFailoverDoesNotDrainBlockingScope(t *testing.T) {
 		t.Fatal("heartbeat failover started draining the blocking scope")
 	case <-time.After(50 * time.Millisecond):
 	}
+	// Failure detection plus the initial jittered retry can exceed one second.
+	// Keep the scope blocked throughout the same retry budget as adjacent tests.
 	select {
 	case <-secondSubscribe:
-	case <-time.After(time.Second):
-		t.Fatal("new subscription did not start while the old scope remained active")
+	case <-started:
+		t.Fatal("heartbeat failover drained the blocking scope during retry backoff")
+	case <-time.After(3 * homeSubscriberRetryInitial):
+		t.Fatal("new subscription did not start after heartbeat loss and backoff while the old scope remained active")
 	}
 	service.homeMu.Lock()
 	exposedRegistry := service.homeRegistry
@@ -1469,8 +1477,11 @@ func TestServiceHeartbeatFailoverDoesNotDrainBlockingScope(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 
-	close(release)
-	scope.End("test cleanup")
+	select {
+	case <-started:
+		t.Fatal("heartbeat failover drained the blocking scope before explicit completion")
+	default:
+	}
 }
 
 func TestServiceShutdownDrainsDetachedRegistryDuringRetry(t *testing.T) {
@@ -1660,8 +1671,8 @@ func TestServiceAmbiguousDispatchDrainsRegistryBeforeRetry(t *testing.T) {
 	}
 	select {
 	case <-secondSubscribe:
-	case <-time.After(time.Second):
-		t.Fatal("subscriber did not retry after ambiguous dispatch drain")
+	case <-time.After(3 * homeSubscriberRetryInitial):
+		t.Fatal("subscriber did not retry after ambiguous dispatch drain and backoff")
 	}
 	service.homeMu.Lock()
 	exposedRegistry := service.homeRegistry
@@ -1725,8 +1736,8 @@ func TestServiceBacksOffAfterRepeatedPreAckFailures(t *testing.T) {
 
 	firstAttempt := <-attempts
 	secondAttempt := <-attempts
-	if retryDelay := secondAttempt.Sub(firstAttempt); retryDelay < 75*time.Millisecond {
-		t.Fatalf("pre-ACK retry delay = %v, want at least 75ms", retryDelay)
+	if retryDelay := secondAttempt.Sub(firstAttempt); retryDelay < homeSubscriberRetryInitial/2 {
+		t.Fatalf("pre-ACK retry delay = %v, want at least %s", retryDelay, homeSubscriberRetryInitial/2)
 	}
 	cancel()
 	select {
@@ -1804,8 +1815,8 @@ func TestServiceHeartbeatLossCancelsBlockedConfigFinalizationWithoutDrainingRegi
 	}
 	select {
 	case <-secondConfig:
-	case <-time.After(time.Second):
-		t.Fatal("subscriber did not retry after heartbeat loss")
+	case <-time.After(3 * homeSubscriberRetryInitial):
+		t.Fatal("subscriber did not retry after heartbeat loss and backoff")
 	}
 	service.homeMu.Lock()
 	currentRegistry := service.homeRegistry

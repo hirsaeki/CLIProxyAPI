@@ -47,7 +47,10 @@ reuse alongside the fork's synchronous-call and Vertex plugin runtime checks.
 
 The Vertex multi-region endpoint regression test is fork-owned:
 `internal/runtime/executor/gemini_vertex_endpoint_fork_test.go`. Keep it separate
-from upstream's `gemini_vertex_executor_test.go`.
+from upstream's `gemini_vertex_executor_test.go`, including its test function name.
+Upstream now supports case-insensitive global and us/eu multi-region endpoints;
+use that implementation without a fork production delta and retain the fork
+regression for default, trimmed, global, and ordinary regional locations.
 
 Current model-discovery and availability files include:
 
@@ -84,6 +87,8 @@ them must stay local to the listed responsibility.
 | `internal/util/gemini_schema.go` | Preserve explicit all-false unions and scope union traversal to schema positions until the generic upstream fix lands |
 | `internal/runtime/executor/antigravity_executor_request.go`, `antigravity_executor_tokens.go` | Reject unsupported false schemas after the final payload rules and before generation/count transport |
 | `sdk/api/handlers/openai/openai_responses_websocket_forward.go` | End local interrupt eligibility before publishing a terminal response, and reopen it for the next created response |
+| `internal/pluginhost/client_guard.go` | Keep native synchronous clients on the caller goroutine while claiming and releasing upstream call-completion hooks exactly once |
+| `internal/home/cluster_balance.go`, `cluster_latency.go` | Bind dedicated operation dial and TLS handshake cancellation to the owner context through the fork dial helper |
 | `internal/pluginhost/loader_windows.go` | Wrap the native loader with synchronous calls and route host callbacks through the fork bridge |
 | `internal/pluginhost/adapters.go` | Match explicit model-provider identifiers and transport candidate models |
 | `internal/pluginhost/rpc_schema.go` | Transport host features and model-provider identifiers over RPC |
@@ -271,6 +276,25 @@ upstream test corrections preserve every assertion and avoid changing production
 thinking behavior, model catalogs, or local overlays. Remove the helper and its
 two call sites when upstream makes the tests independent of catalog retirement.
 
+The Vertex synthesized-auth model test writes its source fixture into a temporary
+file before registration. The fork's new-registration provenance fence must be
+able to validate the same bytes supplied to the synthesizer. Keep the production
+fence and all alias assertions; this test-only fixture correction can be removed
+when upstream adopts it.
+
+Upstream now closes the Git-store corruption fixture's repack repository before
+deleting packfiles and verifies corruption through a newly opened repository.
+Use the upstream implementation without a fork test delta; it supersedes the
+fork correction for go-git's cached handles keeping unlinked packs readable.
+Preserve every fail-closed recovery and file-preservation assertion.
+
+The three WebSocket keepalive-during-upload fixtures must observe Pong while the
+client payload hook is blocked, then wait for the complete request before sending
+a terminal response and closing the server socket. Releasing the hook only permits
+the write to begin; responding immediately creates a scheduler-dependent closed
+socket failure unrelated to keepalive behavior. Keep all Pong ordering assertions
+and the request-read barrier; retire this test-only delta when upstream adopts it.
+
 The WebSocket retry-bind test assigns server connection ordinals before sending
 the upgrade handshake. This prevents a fast retry from being mistaken for the
 connection the fixture intentionally closes. The test-only correction retains
@@ -387,3 +411,45 @@ the upstream stays open, including body closure and failed token accounting. The
 fork-owned helper/handler tests cover exact limits, resets, many short lines,
 unterminated lines, first-chunk handling, and single-error cancellation. Keep these
 alongside the upstream multiline, truncation, and terminal-state regressions.
+
+## Native plugin completion and Home cancellation
+
+The synchronous native plugin path cannot use the guard's worker goroutine: the
+Windows ABI and host callbacks require caller-goroutine execution. Claim upstream's
+call-completion hook before either dispatch path and defer its execution in the
+synchronous path, including error and panic exits. Cancellation or the adapter's
+fallback must not release decoded-auth body slots before the native call finishes.
+`client_guard_finish_fork_test.go` covers same-goroutine execution, exactly-once
+completion, cancellation, panic, errors, and rejected calls. The loader seam cannot
+perform this lifecycle work because the guard owns acquisition and completion.
+
+Upstream owns Home's established-connection cancellation wrapper and its TLS close
+ordering fix. Keep that implementation instead of a parallel fork transport
+registry. The dedicated rebalance and latency dial paths still need owner-bound
+TCP/TLS establishment: Redis may supply a detached dial context, and its default
+TLS dialer does not honor that context. The fork-owned helper uses the existing
+context-aware plugin sync dialer without adding post-connection deadlines. These
+local transport fixes do not change the Home wire protocol or require a matching
+CLIProxyAPIHome server change. Retire the two construction seams when upstream
+provides equivalent owner-bound handshake cancellation.
+
+
+## OAuth start validation
+
+Keep the `StartOAuthV8` JSON request bounded to 1 MiB, including plugin-specific
+metadata. Oversized bodies receive HTTP 413 before parsing or provider dispatch,
+even when the optional global request limit is disabled; a stricter configured
+global limit still applies. This is an endpoint-specific resource bound, not a
+change to credentials, login permissions, or stored proxy configuration.
+
+The minimal seams in `auth_files_v8.go` also let a blank domain fall back to the
+channel alias while preserving nonblank-domain precedence and type validation.
+`auth_files_devin_oauth.go` checks its receiver before taking a configuration
+snapshot so a nil receiver returns the existing configuration error. These
+upstream contribution candidates have fork-owned regression coverage in
+`oauth_start_validation_fork_test.go`; retire redundant seams when upstream
+adopts equivalent validation.
+
+### Home heartbeat retry fixture compatibility
+
+The blocking-scope failover fixture in `sdk/cliproxy/service_executionregistry_test.go` uses the same three-initial-retry observation budget as upstream's adjacent failover tests. Upstream `ce433b37` introduced a 0.5–1 second first retry after heartbeat detection, so the former one-second total budget could reject correct behavior. The fixture keeps the resource blocked through replacement acknowledgment and additionally rejects any drain throughout that interval; cleanup releases it even after a test failure. No production retry or lifecycle behavior is changed. This small test seam is an upstream contribution candidate.

@@ -85,7 +85,7 @@ Defaults:
 - `fail_open`: `false`
 
 The plugin reads `location` from runtime auth metadata first, then from persisted
-credential JSON, and defaults to `us-central1` for compatibility with the native
+credential JSON, and defaults to `global` for compatibility with the native
 Vertex credential loader.
 
 ## Discovery and Cache Behavior

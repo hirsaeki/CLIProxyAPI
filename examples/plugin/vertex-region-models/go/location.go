@@ -23,7 +23,8 @@ func credentialLocation(req pluginapi.AuthModelRequest) string {
 			}
 		}
 	}
-	return "us-central1"
+	// Match the native Vertex executor when no credential location is set.
+	return "global"
 }
 
 func normalizeLocation(location string) string {

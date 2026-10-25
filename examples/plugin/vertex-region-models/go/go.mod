@@ -1,10 +1,10 @@
 module github.com/router-for-me/CLIProxyAPI/v8/examples/plugin/vertex-region-models/go
 
-go 1.26.0
+go 1.26.10
 
 require (
 	github.com/router-for-me/CLIProxyAPI/v8 v8.0.0
-	golang.org/x/net v0.57.0
+	golang.org/x/net v0.60.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
