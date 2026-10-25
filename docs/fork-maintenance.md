@@ -432,3 +432,20 @@ context-aware plugin sync dialer without adding post-connection deadlines. These
 local transport fixes do not change the Home wire protocol or require a matching
 CLIProxyAPIHome server change. Retire the two construction seams when upstream
 provides equivalent owner-bound handshake cancellation.
+
+
+## OAuth start validation
+
+Keep the `StartOAuthV8` JSON request bounded to 1 MiB, including plugin-specific
+metadata. Oversized bodies receive HTTP 413 before parsing or provider dispatch,
+even when the optional global request limit is disabled; a stricter configured
+global limit still applies. This is an endpoint-specific resource bound, not a
+change to credentials, login permissions, or stored proxy configuration.
+
+The minimal seams in `auth_files_v8.go` also let a blank domain fall back to the
+channel alias while preserving nonblank-domain precedence and type validation.
+`auth_files_devin_oauth.go` checks its receiver before taking a configuration
+snapshot so a nil receiver returns the existing configuration error. These
+upstream contribution candidates have fork-owned regression coverage in
+`oauth_start_validation_fork_test.go`; retire redundant seams when upstream
+adopts equivalent validation.

@@ -35,8 +35,11 @@ var newDevinOAuthService = func(cfg *config.Config) devinOAuthService {
 // Devin's authorization page strictly validates that redirect_uri matches
 // http://127.0.0.1:<port>/callback (http protocol, 127.0.0.1 host, and /callback path).
 func (h *Handler) devinCallbackURL() (string, error) {
+	if h == nil {
+		return "", fmt.Errorf("server port is not configured")
+	}
 	cfg := h.configSnapshot()
-	if h == nil || cfg == nil || cfg.Port <= 0 {
+	if cfg == nil || cfg.Port <= 0 {
 		return "", fmt.Errorf("server port is not configured")
 	}
 	return fmt.Sprintf("http://127.0.0.1:%d/callback", cfg.Port), nil

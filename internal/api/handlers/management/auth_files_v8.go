@@ -126,7 +126,8 @@ func (h *Handler) StartOAuthV8(c *gin.Context) {
 
 	provider := strings.TrimSpace(c.Query("provider"))
 	if c.Request != nil && c.Request.Body != nil {
-		rawBody, errRead := io.ReadAll(c.Request.Body)
+		limitedBody := http.MaxBytesReader(c.Writer, c.Request.Body, maxOAuthStartBodyBytesFork)
+		rawBody, errRead := io.ReadAll(limitedBody)
 		if errRead != nil {
 			c.JSON(clienterror.HTTPStatusFromErrorOr(errRead, http.StatusBadRequest), gin.H{"error": "invalid request body"})
 			return
@@ -192,24 +193,25 @@ func (h *Handler) StartOAuthV8(c *gin.Context) {
 				c.Set(oauthSessionProxyURLContextKey, validatedProxy)
 			}
 
+			domain := ""
 			if rawDomain, exists := bodyMap["domain"]; exists && rawDomain != nil {
 				domainStr, ok := rawDomain.(string)
 				if !ok {
 					c.JSON(http.StatusBadRequest, gin.H{"error": "invalid domain"})
 					return
 				}
-				if trimmed := strings.TrimSpace(domainStr); trimmed != "" {
-					c.Set(oauthSessionDomainContextKey, trimmed)
-				}
-			} else if rawChan, exists := bodyMap["channel"]; exists && rawChan != nil {
+				domain = strings.TrimSpace(domainStr)
+			}
+			if rawChan, exists := bodyMap["channel"]; domain == "" && exists && rawChan != nil {
 				chanStr, ok := rawChan.(string)
 				if !ok {
 					c.JSON(http.StatusBadRequest, gin.H{"error": "invalid channel"})
 					return
 				}
-				if trimmed := strings.TrimSpace(chanStr); trimmed != "" {
-					c.Set(oauthSessionDomainContextKey, trimmed)
-				}
+				domain = strings.TrimSpace(chanStr)
+			}
+			if domain != "" {
+				c.Set(oauthSessionDomainContextKey, domain)
 			}
 
 			if rawWebUI, exists := bodyMap["is_webui"]; exists && rawWebUI != nil {
