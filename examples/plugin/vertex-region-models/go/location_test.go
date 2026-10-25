@@ -28,12 +28,12 @@ func TestCredentialLocation(t *testing.T) {
 		{
 			name: "default",
 			req:  pluginapi.AuthModelRequest{},
-			want: "us-central1",
+			want: "global",
 		},
 		{
 			name: "invalid storage",
 			req:  pluginapi.AuthModelRequest{StorageJSON: []byte(`not-json`)},
-			want: "us-central1",
+			want: "global",
 		},
 	}
 

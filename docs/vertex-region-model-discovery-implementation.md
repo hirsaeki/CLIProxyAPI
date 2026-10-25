@@ -75,7 +75,7 @@ The plugin:
 
 1. Declares `model_provider` and binds it to `vertex`.
 2. Reads `location` from auth metadata, then persisted credential JSON, with
-   `us-central1` as the compatibility default.
+   `global` as the compatibility default.
 3. Fetches the official Google locations page through the host HTTP callback.
 4. Parses location columns and cells whose `aria-label` is `Supported` from the
    `Gemini models` sections, excluding separate embedding and media APIs.
