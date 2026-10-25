@@ -449,3 +449,7 @@ snapshot so a nil receiver returns the existing configuration error. These
 upstream contribution candidates have fork-owned regression coverage in
 `oauth_start_validation_fork_test.go`; retire redundant seams when upstream
 adopts equivalent validation.
+
+### Home heartbeat retry fixture compatibility
+
+The blocking-scope failover fixture in `sdk/cliproxy/service_executionregistry_test.go` uses the same three-initial-retry observation budget as upstream's adjacent failover tests. Upstream `ce433b37` introduced a 0.5–1 second first retry after heartbeat detection, so the former one-second total budget could reject correct behavior. The fixture keeps the resource blocked through replacement acknowledgment and additionally rejects any drain throughout that interval; cleanup releases it even after a test failure. No production retry or lifecycle behavior is changed. This small test seam is an upstream contribution candidate.
