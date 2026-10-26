@@ -85,12 +85,10 @@ func TestResponsesWebsocketCompressionRoundTrip(t *testing.T) {
 }
 
 func TestResponsesWebsocketCompressionToggle(t *testing.T) {
-	previous := responsesWebsocketCompressionEnabled.Load()
 	upgraderCompression := responsesWebsocketUpgrader.EnableCompression
-	defer SetResponsesWebsocketCompressionEnabled(previous)
 	for _, enabled := range []bool{true, false, true} {
-		SetResponsesWebsocketCompressionEnabled(enabled)
 		handler := NewOpenAIResponsesAPIHandler(handlers.NewBaseAPIHandlers(&config.SDKConfig{}, nil))
+		handler.WebsocketCompressionEnabled = func() bool { return enabled }
 		engine := gin.New()
 		done := make(chan struct{})
 		engine.GET("/", func(c *gin.Context) { defer close(done); handler.ResponsesWebsocket(c) })

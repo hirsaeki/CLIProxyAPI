@@ -68,15 +68,17 @@ func responseCompressionMiddleware(cfg *config.Config) gin.HandlerFunc {
 			ResponseWriter: commitWriter,
 			encoding:       encoding,
 			minBytes:       minBytes,
+			rejectIdentity: !identityAllowed,
+		}
+		if !identityAllowed {
+			writer.accepted = responseCompressionQualities(strings.Join(c.Request.Header.Values("Accept-Encoding"), ","))
 		}
 		c.Writer = writer
 		c.Next()
 	}
 }
 
-// negotiateResponseCompression ranks quality first, using server preference for ties.
-// The second result reports whether identity is allowed, including wildcard exclusions.
-func negotiateResponseCompression(header string) (string, bool) {
+func responseCompressionQualities(header string) map[string]float64 {
 	qualities := make(map[string]float64)
 	for _, token := range strings.Split(header, ",") {
 		parts := strings.Split(token, ";")
@@ -96,6 +98,13 @@ func negotiateResponseCompression(header string) (string, bool) {
 		}
 		qualities[name] = quality
 	}
+	return qualities
+}
+
+// negotiateResponseCompression ranks quality first, using server preference for ties.
+// The second result reports whether identity is allowed, including wildcard exclusions.
+func negotiateResponseCompression(header string) (string, bool) {
+	qualities := responseCompressionQualities(header)
 	identityQuality, explicitIdentity := qualities["identity"]
 	wildcardQuality, explicitWildcard := qualities["*"]
 	identityAllowed := identityQuality > 0 || (!explicitIdentity && (!explicitWildcard || wildcardQuality > 0))
@@ -163,15 +172,18 @@ type responseCompressor interface {
 // Gin's remaining interfaces, including Hijacker and Pusher, are embedded unchanged.
 type responseCompressionWriter struct {
 	gin.ResponseWriter
-	encoding   string
-	minBytes   int
-	buffer     bytes.Buffer
-	compressor responseCompressor
-	decided    bool
-	writeErr   error
-	written    bool
-	size       int
-	status     int
+	encoding       string
+	rejectIdentity bool
+	accepted       map[string]float64
+	rejected       bool
+	minBytes       int
+	buffer         bytes.Buffer
+	compressor     responseCompressor
+	decided        bool
+	writeErr       error
+	written        bool
+	size           int
+	status         int
 }
 
 func (w *responseCompressionWriter) Written() bool {
@@ -214,6 +226,9 @@ func (w *responseCompressionWriter) Write(data []byte) (n int, err error) {
 	}
 	if !w.decided {
 		return w.buffer.Write(data)
+	}
+	if w.rejected {
+		return len(data), nil
 	}
 	if errDrain := w.drain(); errDrain != nil {
 		return 0, errDrain
@@ -276,10 +291,32 @@ func (w *responseCompressionWriter) decide(force bool, size int) {
 	compressible := strings.HasPrefix(mediaType, "text/") || mediaType == "application/json" ||
 		(strings.HasPrefix(mediaType, "application/") && strings.HasSuffix(mediaType, "+json")) ||
 		mediaType == "application/javascript" || mediaType == "image/svg+xml"
-	if w.ResponseWriter.Written() || status < 200 || status == http.StatusNoContent ||
-		status == http.StatusNotModified || status == http.StatusPartialContent ||
-		w.Header().Get("Content-Encoding") != "" || !compressible {
+	if w.ResponseWriter.Written() || status < 200 || status == http.StatusNoContent || status == http.StatusNotModified {
 		w.decided = true
+		return
+	}
+	if existing := strings.Join(w.Header().Values("Content-Encoding"), ","); existing != "" {
+		w.decided = true
+		if w.rejectIdentity {
+			for _, coding := range strings.Split(existing, ",") {
+				coding = strings.ToLower(strings.TrimSpace(coding))
+				quality, explicit := w.accepted[coding]
+				if !explicit {
+					quality = w.accepted["*"]
+				}
+				if coding == "identity" || quality <= 0 {
+					w.rejectRepresentation()
+					break
+				}
+			}
+		}
+		return
+	}
+	if status == http.StatusPartialContent || !compressible {
+		w.decided = true
+		if w.rejectIdentity {
+			w.rejectRepresentation()
+		}
 		return
 	}
 	streaming := mediaType == "text/event-stream"
@@ -301,6 +338,9 @@ func (w *responseCompressionWriter) decide(force bool, size int) {
 		if errNewWriter != nil {
 			log.Errorf("create response compression encoder: %v", errNewWriter)
 			w.decided = true
+			if w.rejectIdentity {
+				w.rejectRepresentation()
+			}
 			return
 		}
 		compressor = encoder
@@ -310,6 +350,18 @@ func (w *responseCompressionWriter) decide(force bool, size int) {
 	w.Header().Del("Content-Length")
 	w.Header().Set("Content-Encoding", w.encoding)
 	// Gin otherwise commits headers lazily when the encoder emits its first bytes.
+	w.ResponseWriter.WriteHeaderNow()
+}
+
+// Reject before the transport commits; discard the handler's unacceptable representation.
+func (w *responseCompressionWriter) rejectRepresentation() {
+	w.rejected = true
+	w.buffer.Reset()
+	for _, name := range []string{"Content-Encoding", "Content-Length", "Content-Type", "Content-Range", "ETag", "Last-Modified"} {
+		w.Header().Del(name)
+	}
+	w.status = http.StatusNotAcceptable
+	w.ResponseWriter.WriteHeader(http.StatusNotAcceptable)
 	w.ResponseWriter.WriteHeaderNow()
 }
 

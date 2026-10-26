@@ -92,6 +92,10 @@ them must stay local to the listed responsibility.
 | `internal/pluginhost/loader_windows.go` | Wrap the native loader with synchronous calls and route host callbacks through the fork bridge |
 | `internal/pluginhost/adapters.go` | Match explicit model-provider identifiers and transport candidate models |
 | `internal/pluginhost/rpc_schema.go` | Transport host features and model-provider identifiers over RPC |
+| `internal/api/response_compression.go` | Reject an unacceptable fallback representation when a supported encoding was selected and identity was excluded |
+| `internal/api/server.go`, `server_reload.go`, `server_routes.go`, `sdk/api/handlers/openai/openai_responses_handlers.go`, `openai_responses_websocket.go` | Read WebSocket compression policy from the owning Server at upgrade time rather than process-global state |
+| `internal/discovery/browse_queries.go`, `browse_resolver.go` | Enforce known-answer datagram size and use the fork-owned packet index for bounded cache processing |
+| `internal/discovery/spec.go`, `types.go` | Preserve received legacy feature hints without adding them to draft-format advertisements |
 | `internal/pluginhost/rpc_client.go` | Advertise native-candidate support and preserve model-provider identifiers |
 | `sdk/pluginapi/types.go` | Candidate-model and provider-identifier API fields |
 | `.github/workflows/{agents-md-guard,pr-path-guard,auto-retarget-main-pr-to-dev,docker-image}.yml` | Exclude `hirsaeki/CLIProxyAPI` from upstream-only contribution policies and Docker Hub publication |
@@ -191,6 +195,16 @@ upstream request-interceptor body-delivery capabilities. Keep the schema-v7
 omit-body negotiation unchanged; transport identifiers with a copied slice and
 continue advertising native-candidate host support. The combined registration
 regression is `internal/pluginhost/rpc_schema_merge_fork_test.go`.
+
+The response-compression and discovery corrections above are generic upstream
+contribution candidates introduced while reviewing schema-v7 integration. No
+existing extension hook controls response commitment, WebSocket upgrade policy,
+known-answer packetization, or cache admission, so keep these integration seams
+small and remove them when equivalent upstream fixes land. Keep packet-local
+cache indexing in its fork-owned helper and regression tests in `_fork_test.go`
+files. Legacy discovery features are receive-only compatibility data. Preserve
+the upstream no-supported-encoding passthrough policy; the response guard only
+changes an unacceptable fallback after selecting a supported compression codec.
 
 ## Upstream Sync Procedure
 

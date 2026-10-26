@@ -272,7 +272,7 @@ func applyTXTMetadata(svc *DiscoveredService, parsed map[string]string) bool {
 	svc.RawTXT = parsed
 	svc.Product = parsed[txtKeyProduct]
 	svc.InstanceID, svc.NodeRole, svc.Path = "", "", ""
-	svc.Protocols, svc.AuthMethods = nil, nil
+	svc.Protocols, svc.AuthMethods, svc.Features = nil, nil, nil
 	svc.AuthRequired, svc.TLS = false, false
 	svc.Endpoints = make(map[string]string)
 	if version, draft := parsed[txtKeyVersion]; draft {
@@ -362,6 +362,7 @@ func applyLegacyTXTMetadata(svc *DiscoveredService, parsed map[string]string) bo
 	svc.InstanceID, svc.NodeRole = parsed[legacyKeyInstanceID], parsed[legacyKeyNodeRole]
 	svc.Protocols = parseTXTList(parsed[txtKeyProtocols])
 	svc.AuthMethods = parseTXTList(parsed[legacyKeyAuthMethods])
+	svc.Features = parseTXTList(parsed["features"])
 	if _, present := parsed[txtKeyProtocols]; !present {
 		// A base path does not imply support for any particular operation.
 		for _, key := range []string{legacyKeyOpenAI, legacyKeyAnthropic, legacyKeyGemini} {

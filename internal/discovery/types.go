@@ -71,6 +71,7 @@ type DiscoveredService struct {
 	Path         string   `json:"path,omitempty"`
 	TLS          bool     `json:"tls"`
 	Protocols    []string `json:"protocols,omitempty"`
+	Features     []string `json:"features,omitempty"`
 	Product      string   `json:"product,omitempty"`
 	InstanceID   string   `json:"instance_id,omitempty"`
 	AuthRequired bool     `json:"auth_required"`

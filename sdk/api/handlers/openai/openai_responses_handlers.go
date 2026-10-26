@@ -530,6 +530,10 @@ func responsesSSENeedsLineBreak(pending, chunk []byte) bool {
 type OpenAIResponsesAPIHandler struct {
 	*handlers.BaseAPIHandler
 	AccessManager *sdkaccess.Manager
+	// WebsocketCompressionEnabled reads this handler's current compression policy.
+	// Set it before serving requests; the callback must be safe for concurrent use.
+	// A nil callback retains the default of enabled compression.
+	WebsocketCompressionEnabled func() bool
 }
 
 // NewOpenAIResponsesAPIHandler creates a new OpenAIResponses API handlers instance.

@@ -61,6 +61,11 @@ func (c *browseCache) queryMessages(index int, q dns.Question, now time.Time) []
 		rr := dns.Copy(r.rr)
 		rr.Header().Class &^= 0x8000
 		rr.Header().Ttl = uint32(remaining / time.Second)
+		// A resource record cannot be split across continuation packets.
+		single := &dns.Msg{Answer: []dns.RR{rr}}
+		if wire, err := single.Pack(); err != nil || len(wire) > maxPayload {
+			continue
+		}
 		current.Answer = append(current.Answer, rr)
 		wire, err := current.Pack()
 		if err == nil && len(wire) <= maxPayload {

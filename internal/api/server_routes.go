@@ -59,6 +59,10 @@ func (s *Server) setupRoutes() {
 	claudeCodeHandlers := claude.NewClaudeCodeAPIHandler(s.handlers)
 	openaiResponsesHandlers := openai.NewOpenAIResponsesAPIHandler(s.handlers)
 	openaiResponsesHandlers.AccessManager = s.accessManager
+	openaiResponsesHandlers.WebsocketCompressionEnabled = func() bool {
+		cfg := s.getConfig()
+		return cfg == nil || cfg.Codex.WebsocketCompressionEnabled()
+	}
 	s.codexLiveHandler = codexlive.NewHandler(s.handlers.AuthManager, s.cfg)
 
 	// OpenAI compatible API routes

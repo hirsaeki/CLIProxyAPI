@@ -214,6 +214,7 @@ func (c *browseCache) ingest(msg *dns.Msg, index int, src *net.UDPAddr, dst net.
 			incoming[browseRecordKey(index, rr)] = true
 		}
 	}
+	indexRecords := newBrowsePacketIndex(c)
 	flushVictims := make(map[browseRRKey]bool)
 	evictFlushed := func(matches func(browseRRKey) bool) bool {
 		var oldest browseRRKey
@@ -226,6 +227,7 @@ func (c *browseCache) ingest(msg *dns.Msg, index int, src *net.UDPAddr, dst net.
 		if sequence == ^uint64(0) {
 			return false
 		}
+		indexRecords.remove(c, oldest)
 		c.bytes -= c.records[oldest].size
 		delete(c.records, oldest)
 		delete(flushVictims, oldest)
@@ -238,8 +240,9 @@ func (c *browseCache) ingest(msg *dns.Msg, index int, src *net.UDPAddr, dst net.
 			continue
 		}
 		k := browseRecordKey(index, rr)
-		for old, r := range c.records {
-			if old.link == index && old.name == k.name && old.kind == k.kind && now.Sub(r.received) >= time.Second && !incoming[old] {
+		for old := range indexRecords.rrsets[browsePacketRRSetKey{k.link, k.name, k.kind}] {
+			r := c.records[old]
+			if now.Sub(r.received) >= time.Second && !incoming[old] {
 				flushVictims[old] = true
 				if r.expires.After(now.Add(time.Second)) {
 					r.expires = now.Add(time.Second)
@@ -272,19 +275,7 @@ func (c *browseCache) ingest(msg *dns.Msg, index int, src *net.UDPAddr, dst net.
 			if len(c.records) >= browseCacheRRLimit || c.bytes+size > browseCacheByteLimit {
 				continue
 			}
-			count := 0
-			instances := make(map[string]struct{})
-			for key, r := range c.records {
-				if key.link == index && key.name == k.name && (key.kind == k.kind || ((k.kind == dns.TypeA || k.kind == dns.TypeAAAA) && (key.kind == dns.TypeA || key.kind == dns.TypeAAAA))) {
-					count++
-				}
-				if c.instance(key.name) {
-					instances[fmt.Sprintf("%d/%s", key.link, key.name)] = struct{}{}
-				}
-				if p, ok := r.rr.(*dns.PTR); ok {
-					instances[fmt.Sprintf("%d/%s", key.link, browseName(p.Ptr))] = struct{}{}
-				}
-			}
+			count := indexRecords.count(k)
 			instance := ""
 			if c.instance(k.name) {
 				instance = k.name
@@ -293,7 +284,7 @@ func (c *browseCache) ingest(msg *dns.Msg, index int, src *net.UDPAddr, dst net.
 				instance = browseName(p.Ptr)
 			}
 			if instance != "" {
-				if _, ok := instances[fmt.Sprintf("%d/%s", index, instance)]; !ok && len(instances) >= maxDiscoveredServices {
+				if indexRecords.instances[browsePacketInstanceKey{index, instance}] == 0 && len(indexRecords.instances) >= maxDiscoveredServices {
 					continue
 				}
 			}
@@ -319,12 +310,14 @@ func (c *browseCache) ingest(msg *dns.Msg, index int, src *net.UDPAddr, dst net.
 				// history when a peer publishes several rapid updates.
 				var oldest browseRRKey
 				sequence := ^uint64(0)
-				for key, value := range c.records {
-					if key.link == index && key.name == k.name && key.kind == k.kind && value.serial < sequence {
+				for key := range indexRecords.rrsets[browsePacketRRSetKey{k.link, k.name, k.kind}] {
+					value := c.records[key]
+					if value.serial < sequence {
 						oldest = key
 						sequence = value.serial
 					}
 				}
+				indexRecords.remove(c, oldest)
 				c.bytes -= c.records[oldest].size
 				delete(c.records, oldest)
 			}
@@ -332,6 +325,9 @@ func (c *browseCache) ingest(msg *dns.Msg, index int, src *net.UDPAddr, dst net.
 		c.serial++
 		c.records[k] = browseRR{dns.Copy(rr), now.Add(time.Duration(h.Ttl) * time.Second), now, size, c.serial}
 		c.bytes += size - old.size
+		if !exists {
+			indexRecords.add(c, k)
+		}
 	}
 }
 
