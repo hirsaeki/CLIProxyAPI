@@ -186,6 +186,12 @@ Providers without a native catalog must still allow plugin model discovery with
 an empty candidate list. OAuth availability is startup-only: a configured
 missing or invalid file prevents startup, and a path change requires restart.
 
+RPC schema upgrades must preserve both the fork model-provider identifiers and
+upstream request-interceptor body-delivery capabilities. Keep the schema-v7
+omit-body negotiation unchanged; transport identifiers with a copied slice and
+continue advertising native-candidate host support. The combined registration
+regression is `internal/pluginhost/rpc_schema_merge_fork_test.go`.
+
 ## Upstream Sync Procedure
 
 1. Start from a clean fork branch and fetch both `origin` and upstream.
