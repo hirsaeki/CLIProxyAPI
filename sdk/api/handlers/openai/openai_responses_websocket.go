@@ -362,7 +362,7 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 	}
 	wsTimelineLog := newWebsocketTimelineLog(requestLogEnabled, websocketTimelineSourceFromContext(c))
 	localInterrupt := newResponsesLocalInterrupt()
-	// Advanced on every upstream loss: input read under an older epoch predates the loss.
+	// Advanced on every upstream loss: input admitted under an older epoch predates the loss.
 	var inputEpoch atomic.Uint64
 	input, inputDone := readResponsesWebsocketInput(socketCtx, cancelSocket, conn, func(payload []byte) error {
 		return h.forwardResponsesWebsocketInterrupt(socketCtx, passthroughSessionID, payload)
@@ -506,7 +506,7 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 				errReadMessage = context.Cause(socketCtx)
 			} else {
 				if message.Err == nil && message.Epoch < inputEpoch.Load() {
-					// Read before an upstream loss: never sent, the client resends.
+					// Admitted before an upstream loss: never sent, the client resends.
 					if errWrite := writeResponsesWebsocketPreviousResponseNotFound(writer, wsTimelineLog, message.Payload); errWrite != nil {
 						wsTerminateErr = errWrite
 						return

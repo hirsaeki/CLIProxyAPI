@@ -169,7 +169,12 @@ func (c *deferredRequestBodyCapture) Read(payload []byte) (int, error) {
 		return n, errRead
 	}
 
-	remaining := maxDeferredErrorRequestBodyBytes - c.bytesCaptured
+	captureLimit := maxDeferredErrorRequestBodyBytes
+	if c.factory == nil {
+		// Without a spill-to-disk backend, retain only the in-memory prefix.
+		captureLimit = maxErrorOnlyCapturedRequestBodyBytes
+	}
+	remaining := captureLimit - c.bytesCaptured
 	if remaining <= 0 {
 		c.truncated = true
 		return n, errRead
@@ -182,7 +187,7 @@ func (c *deferredRequestBodyCapture) Read(payload []byte) (int, error) {
 	chunk := payload[:int(writeLength)]
 
 	if c.file == nil && c.source == nil {
-		if c.bytesCaptured+writeLength <= maxErrorOnlyCapturedRequestBodyBytes || c.factory == nil {
+		if c.bytesCaptured+writeLength <= maxErrorOnlyCapturedRequestBodyBytes {
 			_, _ = c.memBuf.Write(chunk)
 			c.bytesCaptured += writeLength
 			return n, errRead

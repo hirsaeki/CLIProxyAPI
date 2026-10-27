@@ -92,6 +92,10 @@ func readResponsesWebsocketInput(ctx context.Context, cancel context.CancelCause
 				cancel(errRead)
 				return
 			}
+			// Admission linearizes here, not when the blocking read begins. An
+			// idle read may span a loss and then receive a fresh recovery create.
+			// Once admitted, this epoch is immutable so later losses fence queued
+			// input. Socket arrival times cannot be ordered against upstream EOF.
 			msgEpoch := epoch.Load()
 			if kind != websocket.TextMessage && kind != websocket.BinaryMessage {
 				continue

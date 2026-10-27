@@ -80,8 +80,8 @@ type websocketInputLossState struct {
 type websocketInputLossContextKey struct{}
 
 // WithWebsocketInputEpoch attaches the session's loss epoch counter and the current
-// message's read epoch so executors can advance the epoch on upstream loss and reject
-// messages that were read before an upstream loss.
+// message's admission epoch so executors can advance the epoch on upstream loss and reject
+// messages that were admitted before an upstream loss.
 func WithWebsocketInputEpoch(ctx context.Context, epoch *atomic.Uint64, messageEpoch uint64) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
@@ -102,7 +102,7 @@ func NotifyWebsocketInputLoss(ctx context.Context) {
 	}
 }
 
-// WebsocketInputPredatesLoss reports whether the current turn's input was read before
+// WebsocketInputPredatesLoss reports whether the current turn's input was admitted before
 // an upstream websocket loss.
 func WebsocketInputPredatesLoss(ctx context.Context) bool {
 	if ctx == nil {
