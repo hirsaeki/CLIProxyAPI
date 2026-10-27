@@ -130,6 +130,13 @@ type responseCompressionCommitWriter struct {
 	committed bool
 }
 
+func (w *responseCompressionCommitWriter) Unwrap() http.ResponseWriter {
+	if w == nil {
+		return nil
+	}
+	return w.ResponseWriter
+}
+
 func (w *responseCompressionCommitWriter) mergeVary() {
 	if !w.committed {
 		appendCompressionVary(w.Header())
@@ -184,6 +191,13 @@ type responseCompressionWriter struct {
 	written        bool
 	size           int
 	status         int
+}
+
+func (w *responseCompressionWriter) Unwrap() http.ResponseWriter {
+	if w == nil {
+		return nil
+	}
+	return w.ResponseWriter
 }
 
 func (w *responseCompressionWriter) Written() bool {
