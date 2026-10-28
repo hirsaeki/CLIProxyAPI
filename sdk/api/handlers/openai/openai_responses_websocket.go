@@ -919,6 +919,9 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 				toolCacheTurn:            toolCacheTurn,
 				suppressError:            replayPinnedAuthFailure,
 				localInterrupt:           localInterrupt,
+				websocketOwned: func() bool {
+					return attemptedUpstreamMode == responsesWebsocketUpstreamModeWS
+				},
 			},
 		)
 		if errForward != nil {

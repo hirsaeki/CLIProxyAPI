@@ -86,7 +86,6 @@ them must stay local to the listed responsibility.
 | `sdk/cliproxy/service_executors.go` | Pass candidates to per-auth plugin model resolution |
 | `internal/util/gemini_schema.go` | Preserve explicit all-false unions and scope union traversal to schema positions until the generic upstream fix lands |
 | `internal/runtime/executor/antigravity_executor_request.go`, `antigravity_executor_tokens.go` | Reject unsupported false schemas after the final payload rules and before generation/count transport |
-| `sdk/api/handlers/openai/openai_responses_websocket_forward.go` | End local interrupt eligibility before publishing a terminal response, and reopen it for the next created response |
 | `internal/pluginhost/client_guard.go` | Keep native synchronous clients on the caller goroutine while claiming and releasing upstream call-completion hooks exactly once |
 | `internal/home/cluster_balance.go`, `cluster_latency.go` | Bind dedicated operation dial and TLS handshake cancellation to the owner context through the fork dial helper |
 | `internal/pluginhost/loader_windows.go` | Wrap the native loader with synchronous calls and route host callbacks through the fork bridge |
@@ -207,6 +206,10 @@ cache indexing in its fork-owned helper and regression tests in `_fork_test.go`
 files. Legacy discovery features are receive-only compatibility data. Preserve
 the upstream no-supported-encoding passthrough policy; the response guard only
 changes an unacceptable fallback after selecting a supported compression codec.
+Keep upstream encoder pooling and its lower-memory zstd options. If pooled encoder
+creation fails, preserve the identity-exclusion guard before falling back to the
+original response; `response_compression_pool_failure_fork_test.go` covers both
+codecs with identity allowed and forbidden.
 
 ## Upstream Sync Procedure
 
@@ -329,7 +332,9 @@ This temporary generic fix belongs in the response forwarder because it owns
 publication ordering; service and plugin registration seams cannot enforce it.
 `openai_responses_interrupt_lifecycle_fork_test.go` verifies completed, done, and
 incomplete events while both source channels remain open, including next-turn
-reactivation. Remove the local production delta when upstream adopts the fix.
+reactivation. Upstream now owns this behavior through `deactivate` and
+`reactivate`, preserving turn ownership and already-claimed interrupt frames.
+The duplicate fork calls have been removed; keep the fork regression coverage.
 
 The upstream contribution-policy workflows could support a configurable opt-out
 for maintained forks. Until then, keep the repository-specific job exclusions
