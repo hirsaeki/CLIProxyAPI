@@ -52,6 +52,7 @@ type imageCallResult struct {
 }
 
 type sseFrameAccumulator struct {
+	jsonScan        responsesSSEJSONScan
 	pending         []byte
 	syntheticBreaks []int
 }
@@ -154,9 +155,10 @@ func (a *sseFrameAccumulator) AddChunk(chunk []byte) [][]byte {
 	if responsesSSEStartsNewDataFrame(a.pending, chunk) {
 		frames = append(frames, bytes.Clone(responsesSSERecoverJSONFrame(a.pending, a.syntheticBreaks)))
 		a.pending = a.pending[:0]
+		a.jsonScan = responsesSSEJSONScan{}
 		a.syntheticBreaks = a.syntheticBreaks[:0]
 	}
-	a.pending = responsesSSEAppendChunk(a.pending, &a.syntheticBreaks, chunk)
+	a.pending = responsesSSEAppendChunk(a.pending, &a.syntheticBreaks, chunk, &a.jsonScan)
 
 	for {
 		frameLen := responsesSSEFrameLen(a.pending)
@@ -166,11 +168,13 @@ func (a *sseFrameAccumulator) AddChunk(chunk []byte) [][]byte {
 		frames = append(frames, bytes.Clone(responsesSSERecoverJSONFrame(a.pending[:frameLen], a.syntheticBreaks)))
 		copy(a.pending, a.pending[frameLen:])
 		a.pending = a.pending[:len(a.pending)-frameLen]
+		a.jsonScan = responsesSSEJSONScan{}
 		a.syntheticBreaks = responsesSSEConsumeBreaks(a.syntheticBreaks, frameLen)
 	}
 
 	if len(bytes.TrimSpace(a.pending)) == 0 {
 		a.pending = a.pending[:0]
+		a.jsonScan = responsesSSEJSONScan{}
 		a.syntheticBreaks = a.syntheticBreaks[:0]
 		return frames
 	}
@@ -179,6 +183,7 @@ func (a *sseFrameAccumulator) AddChunk(chunk []byte) [][]byte {
 	}
 	frames = append(frames, bytes.Clone(responsesSSERecoverJSONFrame(a.pending, a.syntheticBreaks)))
 	a.pending = a.pending[:0]
+	a.jsonScan = responsesSSEJSONScan{}
 	a.syntheticBreaks = a.syntheticBreaks[:0]
 	return frames
 }
@@ -197,11 +202,13 @@ func (a *sseFrameAccumulator) Flush() [][]byte {
 		frames = append(frames, bytes.Clone(responsesSSERecoverJSONFrame(a.pending[:frameLen], a.syntheticBreaks)))
 		copy(a.pending, a.pending[frameLen:])
 		a.pending = a.pending[:len(a.pending)-frameLen]
+		a.jsonScan = responsesSSEJSONScan{}
 		a.syntheticBreaks = responsesSSEConsumeBreaks(a.syntheticBreaks, frameLen)
 	}
 
 	if len(bytes.TrimSpace(a.pending)) == 0 {
 		a.pending = nil
+		a.jsonScan = responsesSSEJSONScan{}
 		return frames
 	}
 	frame := responsesSSERecoverJSONFrame(a.pending, a.syntheticBreaks)
@@ -209,6 +216,7 @@ func (a *sseFrameAccumulator) Flush() [][]byte {
 		frames = append(frames, bytes.Clone(frame))
 	}
 	a.pending = nil
+	a.jsonScan = responsesSSEJSONScan{}
 	a.syntheticBreaks = nil
 	return frames
 }

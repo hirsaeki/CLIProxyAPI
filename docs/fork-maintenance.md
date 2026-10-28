@@ -211,6 +211,14 @@ creation fails, preserve the identity-exclusion guard before falling back to the
 original response; `response_compression_pool_failure_fork_test.go` covers both
 codecs with identity allowed and forbidden.
 
+The Responses and image SSE accumulators use the fork-owned
+`sse_json_scan_fork.go` to incrementally track JSON string boundaries when a
+fragment starts with an SSE-looking field. Reset this state whenever pending
+bytes are cleared or a frame prefix is consumed. This removes repeated scans
+from the string-boundary guard, not from every framing/validation pass. Keep
+parity tests against the stateless guard and both accumulators' reset coverage;
+remove the seam when upstream provides equivalent incremental tracking.
+
 ## Upstream Sync Procedure
 
 1. Start from a clean fork branch and fetch both `origin` and upstream.

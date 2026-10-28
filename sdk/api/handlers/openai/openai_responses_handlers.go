@@ -64,6 +64,7 @@ func flushResponsesSSE(w http.ResponseWriter) error {
 
 type responsesSSEFramer struct {
 	pending              []byte
+	jsonScan             responsesSSEJSONScan
 	nextFramePrefix      []byte
 	nextFieldSuffix      []byte
 	syntheticBreaks      []int
@@ -165,6 +166,7 @@ func (f *responsesSSEFramer) WriteChunk(w io.Writer, chunk []byte) {
 		if newFrame {
 			f.writeFrame(w, f.pending)
 			f.pending = f.pending[:0]
+			f.jsonScan = responsesSSEJSONScan{}
 			f.syntheticBreaks = f.syntheticBreaks[:0]
 			if f.terminalEvent != "" {
 				return
@@ -174,12 +176,13 @@ func (f *responsesSSEFramer) WriteChunk(w io.Writer, chunk []byte) {
 	if responsesSSEStartsNewDataFrame(f.pending, chunk) {
 		f.writeFrame(w, f.pending)
 		f.pending = f.pending[:0]
+		f.jsonScan = responsesSSEJSONScan{}
 		f.syntheticBreaks = f.syntheticBreaks[:0]
 		if f.terminalEvent != "" {
 			return
 		}
 	}
-	f.pending = responsesSSEAppendChunk(f.pending, &f.syntheticBreaks, chunk)
+	f.pending = responsesSSEAppendChunk(f.pending, &f.syntheticBreaks, chunk, &f.jsonScan)
 	for {
 		frameLen := responsesSSEFrameLen(f.pending)
 		if frameLen == 0 {
@@ -188,14 +191,17 @@ func (f *responsesSSEFramer) WriteChunk(w io.Writer, chunk []byte) {
 		f.writeFrame(w, f.pending[:frameLen])
 		copy(f.pending, f.pending[frameLen:])
 		f.pending = f.pending[:len(f.pending)-frameLen]
+		f.jsonScan = responsesSSEJSONScan{}
 		f.syntheticBreaks = responsesSSEConsumeBreaks(f.syntheticBreaks, frameLen)
 		if f.terminalEvent != "" {
 			f.pending = f.pending[:0]
+			f.jsonScan = responsesSSEJSONScan{}
 			return
 		}
 	}
 	if len(bytes.TrimSpace(f.pending)) == 0 {
 		f.pending = f.pending[:0]
+		f.jsonScan = responsesSSEJSONScan{}
 		f.syntheticBreaks = f.syntheticBreaks[:0]
 		return
 	}
@@ -204,6 +210,7 @@ func (f *responsesSSEFramer) WriteChunk(w io.Writer, chunk []byte) {
 	}
 	f.writeFrame(w, f.pending)
 	f.pending = f.pending[:0]
+	f.jsonScan = responsesSSEJSONScan{}
 	f.syntheticBreaks = f.syntheticBreaks[:0]
 }
 
@@ -221,9 +228,10 @@ func (f *responsesSSEFramer) Flush(w io.Writer) {
 		if partial && !bytes.HasPrefix([]byte("data"), trimmed) {
 			f.writeFrame(w, f.pending)
 			f.pending = f.pending[:0]
+			f.jsonScan = responsesSSEJSONScan{}
 			f.syntheticBreaks = f.syntheticBreaks[:0]
 		}
-		f.pending = responsesSSEAppendChunk(f.pending, &f.syntheticBreaks, f.nextFramePrefix)
+		f.pending = responsesSSEAppendChunk(f.pending, &f.syntheticBreaks, f.nextFramePrefix, &f.jsonScan)
 		f.nextFramePrefix = nil
 	}
 	if len(f.pending) == 0 || f.terminalEvent != "" {
@@ -231,15 +239,18 @@ func (f *responsesSSEFramer) Flush(w io.Writer) {
 	}
 	if len(bytes.TrimSpace(f.pending)) == 0 {
 		f.pending = f.pending[:0]
+		f.jsonScan = responsesSSEJSONScan{}
 		return
 	}
 	frame := responsesSSERecoverJSONFrame(f.pending, f.syntheticBreaks)
 	if !responsesSSECanFlushWithoutDelimiter(frame) {
 		f.pending = f.pending[:0]
+		f.jsonScan = responsesSSEJSONScan{}
 		return
 	}
 	f.writeFrame(w, frame)
 	f.pending = f.pending[:0]
+	f.jsonScan = responsesSSEJSONScan{}
 	f.syntheticBreaks = f.syntheticBreaks[:0]
 }
 
@@ -492,8 +503,8 @@ func responsesSSERecoverJSONFrame(frame []byte, syntheticBreaks []int) []byte {
 	return frame
 }
 
-func responsesSSEAppendChunk(pending []byte, syntheticBreaks *[]int, chunk []byte) []byte {
-	if responsesSSENeedsLineBreak(pending, chunk) {
+func responsesSSEAppendChunk(pending []byte, syntheticBreaks *[]int, chunk []byte, scan ...*responsesSSEJSONScan) []byte {
+	if responsesSSENeedsLineBreak(pending, chunk, scan...) {
 		*syntheticBreaks = append(*syntheticBreaks, len(pending))
 		pending = append(pending, '\n')
 	}
@@ -705,7 +716,7 @@ func responsesSSEDataLinesValid(chunk []byte) bool {
 	return len(payload) == 0 || bytes.Equal(payload, []byte("[DONE]")) || json.Valid(payload)
 }
 
-func responsesSSENeedsLineBreak(pending, chunk []byte) bool {
+func responsesSSENeedsLineBreak(pending, chunk []byte, scan ...*responsesSSEJSONScan) bool {
 	if len(pending) == 0 || len(chunk) == 0 {
 		return false
 	}
@@ -721,6 +732,9 @@ func responsesSSENeedsLineBreak(pending, chunk []byte) bool {
 	}
 	for _, prefix := range [][]byte{[]byte("data:"), []byte("event:"), []byte("id:"), []byte("retry:"), []byte(":")} {
 		if bytes.HasPrefix(trimmed, prefix) {
+			if len(scan) > 0 && scan[0] != nil {
+				return !scan[0].inside(pending)
+			}
 			return !responsesSSEDataEndsInsideJSONString(pending)
 		}
 	}
