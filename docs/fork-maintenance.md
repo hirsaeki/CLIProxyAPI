@@ -193,8 +193,10 @@ missing or invalid file prevents startup, and a path change requires restart.
 
 RPC schema upgrades must preserve both the fork model-provider identifiers and
 upstream request-interceptor body-delivery capabilities. Keep the schema-v7
-omit-body negotiation unchanged; transport identifiers with a copied slice and
-continue advertising native-candidate host support. The combined registration
+omit-body negotiation (including frontend-auth aliases) and schema-v8 body-patch
+gating unchanged; transport identifiers with a copied slice and continue
+advertising native-candidate host support. Schema v7 must not acquire patch
+adapters advertised by a newer capability set. The combined registration
 regression is `internal/pluginhost/rpc_schema_merge_fork_test.go`.
 
 The response-compression and discovery corrections above are generic upstream
