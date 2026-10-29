@@ -132,17 +132,23 @@ type Capabilities struct {
 	RequestInterceptorOmitBodyAfter bool
 	// RequestBodyPatcherBefore scans raw request bodies in the before-auth phase and
 	// returns localized byte-range edits via request.patch_body_before (schema v8+).
+	// For that phase it replaces the full-body RequestInterceptor call. To also run
+	// RequestInterceptor for headers, path, or termination, set RequestInterceptorOmitBodyBefore.
 	RequestBodyPatcherBefore RequestBodyPatcher
 	// RequestBodyPatcherAfter scans raw request bodies in the after-auth phase and
 	// returns localized byte-range edits via request.patch_body_after (schema v8+).
+	// For that phase it replaces the full-body RequestInterceptor call. To also run
+	// RequestInterceptor for headers, path, or termination, set RequestInterceptorOmitBodyAfter.
 	RequestBodyPatcherAfter RequestBodyPatcher
 	// RequestInterceptorPatchBodyBefore opts into raw request body delivery and byte-range
 	// patching in the before-auth phase via request.patch_body_before. It is honored only
-	// on schema version 8+.
+	// on schema version 8+. It uses the same replacement/metadata opt-in policy
+	// as RequestBodyPatcherBefore; older schemas retain the legacy interceptor.
 	RequestInterceptorPatchBodyBefore bool
 	// RequestInterceptorPatchBodyAfter opts into raw request body delivery and byte-range
 	// patching in the after-auth phase via request.patch_body_after. It is honored only
-	// on schema version 8+.
+	// on schema version 8+. It uses the same replacement/metadata opt-in policy
+	// as RequestBodyPatcherAfter; older schemas retain the legacy interceptor.
 	RequestInterceptorPatchBodyAfter bool
 	// RequestLifecyclePlugin asynchronously receives one terminal event for each request that reached request interception.
 	RequestLifecyclePlugin RequestLifecyclePlugin
