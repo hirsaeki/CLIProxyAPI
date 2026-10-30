@@ -80,7 +80,7 @@ them must stay local to the listed responsibility.
 | `sdk/cliproxy/builder.go` | Load and inject the startup availability snapshot |
 | `sdk/cliproxy/service_config.go` | Warn when a startup-only availability path changes |
 | `sdk/cliproxy/service_models.go` | Pass native candidates through the fork model-registration seam and preserve static-plugin exclusions in compatible-provider branches |
-| `internal/runtime/executor/claude_executor_stream.go` | Bound complete native and translated Claude SSE events through the fork-owned helper before appending, preserving failed usage on overflow |
+| `internal/runtime/executor/claude_executor_stream.go` | Bound complete native and translated Claude SSE events through the fork-owned helper before appending, preserving failed usage on overflow and observing upstream stream usage before resetting each event |
 | `sdk/api/handlers/claude/code_handlers.go` | Bound partial lines and multi-line SSE events through the fork-owned observer state and existing `ChunkError` hook, including the first chunk before headers |
 | `internal/discovery/zeroconf.go` | Keep the host-conflict probe receive buffer large enough for complete mDNS datagrams until the upstream buffer fix lands |
 | `sdk/cliproxy/service_executors.go` | Pass candidates to per-auth plugin model resolution |
