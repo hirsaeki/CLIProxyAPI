@@ -398,7 +398,8 @@ func (h *Handler) VerifyAuthFileV8(c *gin.Context) {
 	model := strings.TrimSpace(c.Query("model"))
 
 	if c.Request != nil && c.Request.Body != nil {
-		rawBody, errRead := io.ReadAll(c.Request.Body)
+		limitedBody := http.MaxBytesReader(c.Writer, c.Request.Body, maxAuthVerifyBodyBytesFork)
+		rawBody, errRead := io.ReadAll(limitedBody)
 		if errRead != nil {
 			c.JSON(clienterror.HTTPStatusFromErrorOr(errRead, http.StatusBadRequest), gin.H{"error": "invalid request body"})
 			return

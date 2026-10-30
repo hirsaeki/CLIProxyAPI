@@ -91,6 +91,7 @@ them must stay local to the listed responsibility.
 | `internal/pluginhost/loader_windows.go` | Wrap the native loader with synchronous calls and route host callbacks through the fork bridge |
 | `internal/pluginhost/adapters.go` | Match explicit model-provider identifiers and transport candidate models |
 | `internal/pluginhost/rpc_schema.go` | Transport host features and model-provider identifiers over RPC |
+| `internal/api/handlers/management/auth_files_v8.go` | Bound OAuth-start and credential-verification control request bodies to 1 MiB while preserving stricter outer limits and error status mapping |
 | `internal/api/middleware/request_logging.go` | Keep deferred error-body capture within the 1 MiB memory threshold when no file-source factory is available; do not limit bytes delivered to the handler |
 | `internal/api/middleware/response_writer.go` | Snapshot the streaming worker queue and logger at launch so finalization cannot race with delayed worker startup or discard queued log chunks |
 | `internal/api/response_compression.go` | Reject an unacceptable fallback representation when a supported encoding was selected and identity was excluded |
