@@ -149,6 +149,8 @@ Windows installation with the repository-local WinGet manifest:
 Optional per-credential Claude/xAI OAuth model availability quick start:
 [docs/oauth-model-availability.md#quick-start](docs/oauth-model-availability.md#quick-start)
 
+[Claude Code with a Codex backend](examples/claude-code-codex/README.md): optional visible progress, classifier routing, image-tool pass-through, and latency diagnostics.
+
 ## Management API
 
 see [MANAGEMENT_API.md](https://help.router-for.me/management/api)

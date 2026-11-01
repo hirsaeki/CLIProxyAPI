@@ -89,9 +89,12 @@ them must stay local to the listed responsibility.
 | `internal/pluginhost/client_guard.go` | Keep native synchronous clients on the caller goroutine while claiming and releasing upstream call-completion hooks exactly once |
 | `internal/home/cluster_balance.go`, `cluster_latency.go` | Bind dedicated operation dial and TLS handshake cancellation to the owner context through the fork dial helper |
 | `internal/pluginhost/loader_windows.go` | Wrap the native loader with synchronous calls and route host callbacks through the fork bridge |
+| `internal/translator/openai/openai/chat-completions/openai_openai_response.go`, `internal/translator/gemini/gemini/gemini_gemini_response.go` | Extract per-event SSE data through the shared fork-owned helper, excluding metadata from same-format payloads |
+| `internal/pluginhost/adapters_executors_deframe.go` | Recognize leading SSE `id:` and `retry:` fields and their split prefixes in same-format plugin streams |
 | `internal/pluginhost/adapters.go` | Match explicit model-provider identifiers and transport candidate models |
 | `internal/pluginhost/rpc_schema.go` | Transport host features and model-provider identifiers over RPC |
 | `internal/api/handlers/management/auth_files_v8.go` | Bound OAuth-start and credential-verification control request bodies to 1 MiB while preserving stricter outer limits and error status mapping |
+| `internal/api/handlers/management/auth_files_provider_oauth.go` | Restore exact preexisting auth-file bytes, including empty files, when plugin-login batch persistence rolls back |
 | `internal/api/middleware/request_logging.go` | Keep deferred error-body capture within the 1 MiB memory threshold when no file-source factory is available; do not limit bytes delivered to the handler |
 | `internal/api/middleware/response_writer.go` | Snapshot the streaming worker queue and logger at launch so finalization cannot race with delayed worker startup or discard queued log chunks |
 | `internal/api/response_compression.go` | Reject an unacceptable fallback representation when a supported encoding was selected and identity was excluded |
@@ -101,6 +104,14 @@ them must stay local to the listed responsibility.
 | `internal/pluginhost/rpc_client.go` | Advertise native-candidate support and preserve model-provider identifiers |
 | `sdk/pluginapi/types.go` | Candidate-model and provider-identifier API fields |
 | `.github/workflows/{agents-md-guard,pr-path-guard,auto-retarget-main-pr-to-dev,docker-image}.yml` | Exclude `hirsaeki/CLIProxyAPI` from upstream-only contribution policies and Docker Hub publication |
+
+Explicit `ModelProviderIdentifiers` remain authoritative for per-auth model
+discovery, even when a plugin also advertises multiple OAuth login providers.
+Without explicit model identifiers, use upstream's complete auth-provider lookup
+and static/executor fallback. RPC must advertise auth support for either the
+singular or plural capability while copying the model identifiers and preserving
+native-candidate negotiation. Keep `multi_auth_model_candidates_fork_test.go`
+alongside the upstream multi-portal tests to cover both native and RPC paths.
 
 Adding another upstream-owned integration file requires documenting why an
 existing seam cannot support the feature.
@@ -174,6 +185,11 @@ exclusions, aliases, OAuth settings, or forced prefixes midway through a batch.
 with different captured and current configurations. Upstream's global-exclusion
 fence must still reject obsolete exclusions; captured aliases, settings and
 prefixes remain consistent when the exclusion policy is current.
+
+Upstream config commits clone the caller's input before assigning connection-pool
+generations. `service_config_sync_fork_test.go` checks the shared service/commit
+snapshot, caller isolation, availability warning and stale-probe cancellation;
+do not require the committed snapshot to reuse the caller's pointer.
 
 Keep the entry-captured publication fence through all three plugin paths and the
 cached Antigravity fallback. Do not reacquire the registry epoch after runtime
@@ -474,6 +490,14 @@ provides equivalent owner-bound handshake cancellation.
 
 ## OAuth start validation
 
+Plugin-login batch rollback must distinguish an empty preexisting file from an
+absent file. Use the captured existence flag to restore exact bytes and prevent
+the file token store from replacing that restoration with runtime metadata.
+The rollback helper owns both operations, so no existing external hook can
+preserve this invariant. `plugin_login_rollback_empty_fork_test.go` covers absent
+and existing runtime auth, a handler without a manager, and concurrent winners.
+Retire these two guards when upstream provides equivalent empty-file handling.
+
 Keep the `StartOAuthV8` JSON request bounded to 1 MiB, including plugin-specific
 metadata. Oversized bodies receive HTTP 413 before parsing or provider dispatch,
 even when the optional global request limit is disabled; a stricter configured
@@ -491,3 +515,20 @@ adopts equivalent validation.
 ### Home heartbeat retry fixture compatibility
 
 The blocking-scope failover fixture in `sdk/cliproxy/service_executionregistry_test.go` uses the same three-initial-retry observation budget as upstream's adjacent failover tests. Upstream `ce433b37` introduced a 0.5–1 second first retry after heartbeat detection, so the former one-second total budget could reject correct behavior. The fixture keeps the resource blocked through replacement acknowledgment and additionally rejects any drain throughout that interval; cleanup releases it even after a test failure. No production retry or lifecycle behavior is changed. This small test seam is an upstream contribution candidate.
+
+## Plugin SSE metadata framing
+
+Same-format plugin streams may begin with `id:` or `retry:` before their data
+line. The deframer's initial and buffered detectors share the same complete/partial
+field recognition, including colonless empty-value fields terminated by LF or
+CRLF, so arbitrary HTTP chunk boundaries do not leak framing into the
+translated payload. No outer hook can reconstruct bytes already emitted by the
+parser. `executor_sse_metadata_fork_test.go` covers coalesced events, every split
+position, bytewise delivery, LF/CRLF boundaries, same-format adapter output, and
+metadata-like bare payloads. EOF/error flushing retains the terminator of a
+field-only metadata line, without treating genuine bare field names as SSE. The same-format OpenAI/Gemini translators then use
+`common/sse_payload_fork.go` to extract only data lines, including metadata-led
+terminal markers, while dropping metadata-only frames and preserving bare input.
+This companion seam is required because detecting event boundaries alone leaves
+metadata in the translated payload. Retire these upstream contribution candidates
+when upstream provides equivalent framing and payload normalization.
