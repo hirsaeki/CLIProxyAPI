@@ -1,15 +1,17 @@
 // Package chat_completions provides passthrough response translation for OpenAI Chat Completions.
-// It normalizes OpenAI-compatible SSE lines by stripping the "data:" prefix and dropping "[DONE]".
+// It extracts OpenAI-compatible SSE event data and drops "[DONE]".
 package chat_completions
 
 import (
 	"bytes"
 	"context"
+
+	translatorcommon "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/common"
 )
 
 // ConvertOpenAIResponseToOpenAI normalizes a single chunk of an OpenAI-compatible streaming response.
-// If the chunk is an SSE "data:" line, the prefix is stripped and the remaining JSON payload is returned.
-// The "[DONE]" marker yields no output.
+// If the chunk is an SSE event, only its data payload is returned.
+// Metadata-only events and the "[DONE]" marker yield no output.
 //
 // Parameters:
 //   - ctx: The context for the request, used for cancellation and timeout handling
@@ -26,8 +28,11 @@ func ConvertOpenAIResponseToOpenAI(_ context.Context, _ string, originalRequestR
 			return [][]byte{}
 		}
 	}
-	if bytes.HasPrefix(rawJSON, []byte("data:")) {
-		rawJSON = bytes.TrimSpace(rawJSON[5:])
+	if payload, isSSE := translatorcommon.SSEEventPayload(rawJSON); isSSE {
+		if len(payload) == 0 {
+			return [][]byte{}
+		}
+		rawJSON = payload
 	}
 	if bytes.Equal(rawJSON, []byte("[DONE]")) {
 		if param != nil {

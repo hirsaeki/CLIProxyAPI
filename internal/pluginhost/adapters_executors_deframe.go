@@ -73,10 +73,12 @@ func (d *executorSSEDeframer) feed(payload []byte) [][]byte {
 		if len(d.buffer) == 0 {
 			break
 		}
-		if !sseDataLinePrefix(d.buffer) && !bytes.HasPrefix(d.buffer, []byte("event:")) && !bytes.HasPrefix(d.buffer, []byte(":")) {
+		if !sseDataLinePrefix(d.buffer) && !bytes.HasPrefix(d.buffer, []byte("event:")) &&
+			!bytes.HasPrefix(d.buffer, []byte("id:")) && !bytes.HasPrefix(d.buffer, []byte("retry:")) &&
+			!bytes.HasPrefix(d.buffer, []byte(":")) {
 			// Leftover bytes do not begin a new SSE event. A partial
-			// "data:"/"event:" prefix stays buffered. In SSE mode only the
-			// first complete line is released so an SSE event that follows
+			// "data:"/"event:"/"id:"/"retry:" prefix stays buffered. In SSE
+			// mode only the first complete line is released so an SSE event that follows
 			// in a later chunk is still deframed; in bare mode the whole
 			// leftover is released so bare content keeps its chunk
 			// boundary (no line-based splitting or merging).
@@ -123,11 +125,10 @@ func (d *executorSSEDeframer) flush() []byte {
 	return pending
 }
 
-// canBeginSSEEvent reports whether payload could start an SSE event: a data
-// line, an event line, a comment line, or a strict prefix of the "data:" or
-// "event:" field names that later bytes may complete. A leading newline
-// alone is not enough: bare JSON may open with a newline and must stay one
-// untouched payload.
+// canBeginSSEEvent reports whether payload could start an SSE event: a data,
+// event, id, retry, or comment line, or a strict prefix of those field names
+// that later bytes may complete. A leading newline alone is not enough:
+// bare JSON may open with a newline and must stay one untouched payload.
 func canBeginSSEEvent(b []byte) bool {
 	if len(b) == 0 {
 		return false
@@ -139,6 +140,10 @@ func canBeginSSEEvent(b []byte) bool {
 		return sseFieldPrefixCandidate(b, "data:")
 	case 'e':
 		return sseFieldPrefixCandidate(b, "event:")
+	case 'i':
+		return sseFieldPrefixCandidate(b, "id:")
+	case 'r':
+		return sseFieldPrefixCandidate(b, "retry:")
 	}
 	return false
 }
@@ -150,14 +155,19 @@ func sseFieldPrefixCandidate(b []byte, field string) bool {
 	return bytes.HasPrefix(b, []byte(field))
 }
 
-// isSSEFieldPrefixPartial reports whether b is a strict prefix of "data:" or
-// "event:": the field name may be completed by a later chunk, so these bytes
+// isSSEFieldPrefixPartial reports whether b is a strict prefix of a known
+// SSE field: the name may be completed by a later chunk, so these bytes
 // must stay buffered instead of being released.
 func isSSEFieldPrefixPartial(b []byte) bool {
-	if len(b) == 0 || len(b) >= len("event:") {
+	if len(b) == 0 {
 		return false
 	}
-	return bytes.HasPrefix([]byte("data:"), b) || bytes.HasPrefix([]byte("event:"), b)
+	for _, field := range []string{"data:", "event:", "id:", "retry:"} {
+		if len(b) < len(field) && bytes.HasPrefix([]byte(field), b) {
+			return true
+		}
+	}
+	return false
 }
 
 // sseDataLinePrefix reports whether b begins with an SSE data line. The

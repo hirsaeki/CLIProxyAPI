@@ -89,6 +89,8 @@ them must stay local to the listed responsibility.
 | `internal/pluginhost/client_guard.go` | Keep native synchronous clients on the caller goroutine while claiming and releasing upstream call-completion hooks exactly once |
 | `internal/home/cluster_balance.go`, `cluster_latency.go` | Bind dedicated operation dial and TLS handshake cancellation to the owner context through the fork dial helper |
 | `internal/pluginhost/loader_windows.go` | Wrap the native loader with synchronous calls and route host callbacks through the fork bridge |
+| `internal/translator/openai/openai/chat-completions/openai_openai_response.go`, `internal/translator/gemini/gemini/gemini_gemini_response.go` | Extract per-event SSE data through the shared fork-owned helper, excluding metadata from same-format payloads |
+| `internal/pluginhost/adapters_executors_deframe.go` | Recognize leading SSE `id:` and `retry:` fields and their split prefixes in same-format plugin streams |
 | `internal/pluginhost/adapters.go` | Match explicit model-provider identifiers and transport candidate models |
 | `internal/pluginhost/rpc_schema.go` | Transport host features and model-provider identifiers over RPC |
 | `internal/api/handlers/management/auth_files_v8.go` | Bound OAuth-start and credential-verification control request bodies to 1 MiB while preserving stricter outer limits and error status mapping |
@@ -513,3 +515,18 @@ adopts equivalent validation.
 ### Home heartbeat retry fixture compatibility
 
 The blocking-scope failover fixture in `sdk/cliproxy/service_executionregistry_test.go` uses the same three-initial-retry observation budget as upstream's adjacent failover tests. Upstream `ce433b37` introduced a 0.5–1 second first retry after heartbeat detection, so the former one-second total budget could reject correct behavior. The fixture keeps the resource blocked through replacement acknowledgment and additionally rejects any drain throughout that interval; cleanup releases it even after a test failure. No production retry or lifecycle behavior is changed. This small test seam is an upstream contribution candidate.
+
+## Plugin SSE metadata framing
+
+Same-format plugin streams may begin with `id:` or `retry:` before their data
+line. The deframer's initial, buffered, and partial-prefix detectors must agree
+on these fields so arbitrary HTTP chunk boundaries do not leak framing into the
+translated payload. No outer hook can reconstruct bytes already emitted by the
+parser. `executor_sse_metadata_fork_test.go` covers coalesced events, every split
+position, bytewise delivery, LF/CRLF boundaries, same-format adapter output, and
+metadata-like bare payloads. The same-format OpenAI/Gemini translators then use
+`common/sse_payload_fork.go` to extract only data lines, including metadata-led
+terminal markers, while dropping metadata-only frames and preserving bare input.
+This companion seam is required because detecting event boundaries alone leaves
+metadata in the translated payload. Retire these upstream contribution candidates
+when upstream provides equivalent framing and payload normalization.

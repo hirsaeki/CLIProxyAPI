@@ -7,10 +7,13 @@ import (
 	translatorcommon "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/common"
 )
 
-// PassthroughGeminiResponseStream forwards Gemini responses unchanged.
+// PassthroughGeminiResponseStream extracts SSE event data or forwards bare Gemini payloads.
 func PassthroughGeminiResponseStream(_ context.Context, _ string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, _ *any) [][]byte {
-	if bytes.HasPrefix(rawJSON, []byte("data:")) {
-		rawJSON = bytes.TrimSpace(rawJSON[5:])
+	if payload, isSSE := translatorcommon.SSEEventPayload(rawJSON); isSSE {
+		if len(payload) == 0 {
+			return [][]byte{}
+		}
+		rawJSON = payload
 	}
 
 	if bytes.Equal(rawJSON, []byte("[DONE]")) {
