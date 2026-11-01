@@ -102,6 +102,14 @@ them must stay local to the listed responsibility.
 | `sdk/pluginapi/types.go` | Candidate-model and provider-identifier API fields |
 | `.github/workflows/{agents-md-guard,pr-path-guard,auto-retarget-main-pr-to-dev,docker-image}.yml` | Exclude `hirsaeki/CLIProxyAPI` from upstream-only contribution policies and Docker Hub publication |
 
+Explicit `ModelProviderIdentifiers` remain authoritative for per-auth model
+discovery, even when a plugin also advertises multiple OAuth login providers.
+Without explicit model identifiers, use upstream's complete auth-provider lookup
+and static/executor fallback. RPC must advertise auth support for either the
+singular or plural capability while copying the model identifiers and preserving
+native-candidate negotiation. Keep `multi_auth_model_candidates_fork_test.go`
+alongside the upstream multi-portal tests to cover both native and RPC paths.
+
 Adding another upstream-owned integration file requires documenting why an
 existing seam cannot support the feature.
 
