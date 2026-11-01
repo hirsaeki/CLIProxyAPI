@@ -184,6 +184,11 @@ with different captured and current configurations. Upstream's global-exclusion
 fence must still reject obsolete exclusions; captured aliases, settings and
 prefixes remain consistent when the exclusion policy is current.
 
+Upstream config commits clone the caller's input before assigning connection-pool
+generations. `service_config_sync_fork_test.go` checks the shared service/commit
+snapshot, caller isolation, availability warning and stale-probe cancellation;
+do not require the committed snapshot to reuse the caller's pointer.
+
 Keep the entry-captured publication fence through all three plugin paths and the
 cached Antigravity fallback. Do not reacquire the registry epoch after runtime
 reads or plugin discovery. A plugin-returned auth update may refresh the fence's

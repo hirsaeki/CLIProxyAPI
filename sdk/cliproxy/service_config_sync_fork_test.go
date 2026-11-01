@@ -37,8 +37,16 @@ func TestForkConfigCommitKeepsAvailabilityWarningAndCancelsStaleProbe(t *testing
 	next := &config.Config{OAuthModelAvailabilityFile: "new.json"}
 	next.ProxyURL = "direct"
 	commit := svc.commitConfigUpdate(next)
-	if commit.cfg != next || commit.sequence != 1 || svc.cfg != next {
-		t.Fatalf("config was not committed: %#v", commit)
+	if commit.cfg == nil || commit.cfg == next || commit.sequence != 1 || svc.cfg != commit.cfg {
+		t.Fatalf("config was not committed as an independent runtime snapshot: %#v", commit)
+	}
+	if commit.cfg.OAuthModelAvailabilityFile != next.OAuthModelAvailabilityFile || commit.cfg.ProxyURL != next.ProxyURL {
+		t.Fatalf("committed config lost requested values: %#v", commit.cfg)
+	}
+	next.OAuthModelAvailabilityFile = "caller-mutated.json"
+	next.ProxyURL = "http://caller-mutated.invalid"
+	if commit.cfg.OAuthModelAvailabilityFile != "new.json" || commit.cfg.ProxyURL != "direct" {
+		t.Fatal("caller mutation changed the committed runtime snapshot")
 	}
 	if ctx.Err() == nil {
 		t.Fatal("config change did not cancel the stale Antigravity probe")
