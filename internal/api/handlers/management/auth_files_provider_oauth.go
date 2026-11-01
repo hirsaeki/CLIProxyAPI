@@ -1549,7 +1549,7 @@ func jsonPayloadsEqualOrBytesEqual(left, right []byte) bool {
 var errPluginRollbackSuperseded = errors.New("plugin login rollback superseded")
 
 func (h *Handler) restoreOverwrittenPluginRecord(ctx context.Context, rb savedPluginRecordRollback, diskPath string) {
-	if diskPath != "" && len(rb.prevDiskBytes) > 0 {
+	if diskPath != "" && rb.existedOnDisk {
 		if errWrite := os.WriteFile(diskPath, rb.prevDiskBytes, 0o600); errWrite != nil {
 			log.WithError(errWrite).WithField("path", diskPath).Warn("failed to restore overwritten plugin auth token")
 		}
@@ -1561,7 +1561,7 @@ func (h *Handler) restoreOverwrittenPluginRecord(ctx context.Context, rb savedPl
 	if store == nil {
 		return
 	}
-	if _, isFileStore := store.(*sdkAuth.FileTokenStore); isFileStore && diskPath != "" && len(rb.prevDiskBytes) > 0 {
+	if _, isFileStore := store.(*sdkAuth.FileTokenStore); isFileStore && diskPath != "" && rb.existedOnDisk {
 		return
 	}
 	var diskMeta map[string]any
