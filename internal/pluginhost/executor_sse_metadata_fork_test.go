@@ -1,14 +1,17 @@
 package pluginhost
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"testing"
 
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
 )
 
 func TestExecutorSSEDeframerMetadataFieldsFork(t *testing.T) {
-	for _, metadata := range []string{"id: event-1", "retry: 1000"} {
+	for _, metadata := range []string{"id: event-1", "retry: 1000", "id", "retry", "event", "data"} {
 		for _, newline := range []string{"\n", "\r\n"} {
 			frame := metadata + newline + "data: {\"choices\":[]}" + newline + newline
 			done := "data: [DONE]" + newline + newline
@@ -39,7 +42,7 @@ func TestExecutorSSEDeframerMetadataFieldsFork(t *testing.T) {
 func TestExecutorAdapterSSEMetadataFieldsFork(t *testing.T) {
 	const payload = `{"choices":[{"delta":{"content":"Hello"}}]}`
 	const finish = `{"choices":[{"delta":{},"finish_reason":"stop"}]}`
-	for _, metadata := range []string{"id: event-1", "retry: 1000"} {
+	for _, metadata := range []string{"id: event-1", "retry: 1000", "id", "retry", "event", "data"} {
 		// Include metadata both before the first event and after SSE mode has
 		// been established. Only JSON payloads should reach the HTTP handler.
 		input := metadata + "\ndata: " + payload + "\n\n" + metadata + "\ndata: " + finish + "\n\ndata: [DONE]\n\n"
@@ -103,4 +106,51 @@ func TestExecutorAdapterSSEMetadataTerminalFork(t *testing.T) {
 		}
 		assertStringsEqual(t, "after terminal", got, nil)
 	})
+}
+
+func TestExecutorAdapterSSEColonlessTailFork(t *testing.T) {
+	for _, field := range []string{"id", "retry", "event", "data"} {
+		for _, ending := range []string{"", "\n", "\r\n"} {
+			for _, format := range []sdktranslator.Format{sdktranslator.FormatOpenAI, sdktranslator.FormatGemini} {
+				t.Run(fmt.Sprintf("%s/%q/%s", field, ending, format), func(t *testing.T) {
+					adapter := streamAdapterForTest(t, format, []byte(field+ending))
+					got, err := executeSameFormatStream(t, adapter, format)
+					if err != nil {
+						t.Fatal(err)
+					}
+					var want []string
+					if ending == "" {
+						want = []string{field}
+					}
+					assertStringsEqual(t, "tail", got, want)
+				})
+			}
+		}
+	}
+}
+
+func TestExecutorSSEColonlessErrorTailFork(t *testing.T) {
+	streamErr := errors.New("stream failure")
+	for _, ending := range []string{"\n", "\r\n"} {
+		t.Run(fmt.Sprintf("%q", ending), func(t *testing.T) {
+			in := make(chan pluginapi.ExecutorStreamChunk, 2)
+			in <- pluginapi.ExecutorStreamChunk{Payload: []byte("id" + ending)}
+			in <- pluginapi.ExecutorStreamChunk{Err: streamErr}
+			close(in)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			out := deframeExecutorSSEChunks(ctx, in)
+			first, ok := <-out
+			if !ok || first.Err != nil || string(first.Payload) != "id"+ending {
+				t.Fatalf("metadata tail lost framing: %#v, open=%t", first, ok)
+			}
+			failure, ok := <-out
+			if !ok || failure.Err != streamErr {
+				t.Fatalf("error = %#v, open=%t", failure, ok)
+			}
+			if _, ok := <-out; ok {
+				t.Fatal("unexpected extra chunk")
+			}
+		})
+	}
 }

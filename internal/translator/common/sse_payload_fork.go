@@ -6,7 +6,11 @@ import "bytes"
 // untouched. The caller owns event boundaries; this is not a stream deframer.
 // Metadata-only events are SSE with no payload and should not be forwarded.
 func SSEEventPayload(raw []byte) (payload []byte, isSSE bool) {
-	for _, prefix := range []string{"data:", "event:", "id:", "retry:", ":"} {
+	for _, prefix := range []string{
+		"data:", "event:", "id:", "retry:", ":",
+		"data\n", "event\n", "id\n", "retry\n",
+		"data\r\n", "event\r\n", "id\r\n", "retry\r\n",
+	} {
 		if bytes.HasPrefix(raw, []byte(prefix)) {
 			isSSE = true
 			break

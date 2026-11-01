@@ -73,18 +73,10 @@ func (d *executorSSEDeframer) feed(payload []byte) [][]byte {
 		if len(d.buffer) == 0 {
 			break
 		}
-		if !sseDataLinePrefix(d.buffer) && !bytes.HasPrefix(d.buffer, []byte("event:")) &&
-			!bytes.HasPrefix(d.buffer, []byte("id:")) && !bytes.HasPrefix(d.buffer, []byte("retry:")) &&
-			!bytes.HasPrefix(d.buffer, []byte(":")) {
-			// Leftover bytes do not begin a new SSE event. A partial
-			// "data:"/"event:"/"id:"/"retry:" prefix stays buffered. In SSE
-			// mode only the first complete line is released so an SSE event that follows
-			// in a later chunk is still deframed; in bare mode the whole
-			// leftover is released so bare content keeps its chunk
-			// boundary (no line-based splitting or merging).
-			if isSSEFieldPrefixPartial(d.buffer) {
-				break
-			}
+		if !canBeginSSEEvent(d.buffer) {
+			// In SSE mode release only the first complete bare line so a
+			// following SSE event is still deframed. In bare mode release
+			// all leftover bytes to preserve the original chunk boundary.
 			if d.sawSSE {
 				idx := bytes.IndexByte(d.buffer, '\n')
 				if idx < 0 {
@@ -118,34 +110,41 @@ func (d *executorSSEDeframer) flush() []byte {
 	// them is what remains to be delivered, so a final "data: [DONE]\r" still
 	// reads as the terminal marker. Interior whitespace (including a
 	// leading newline) belongs to the payload and is preserved.
-	pending = bytes.TrimRight(pending, "\r\n")
+	trimmed := bytes.TrimRight(pending, "\r\n")
+	if bytes.IndexByte(pending, '\n') >= 0 {
+		switch string(trimmed) {
+		case "data", "event", "id", "retry":
+			// Keep a terminated field-only line recognizable as SSE. A
+			// genuinely bare field name (no newline) must stay bare.
+			return pending
+		}
+	}
+	pending = trimmed
 	if len(pending) == 0 {
 		return nil
 	}
 	return pending
 }
 
-// canBeginSSEEvent reports whether payload could start an SSE event: a data,
-// event, id, retry, or comment line, or a strict prefix of those field names
-// that later bytes may complete. A leading newline alone is not enough:
-// bare JSON may open with a newline and must stay one untouched payload.
+// canBeginSSEEvent reports whether payload could start an SSE event or a
+// partial field name that later bytes may complete. Field-name-only lines
+// carry empty values; their LF or CRLF ending may also cross chunk boundaries.
+// A leading newline alone is not enough: bare JSON may open with a newline
+// and must stay one untouched payload.
 func canBeginSSEEvent(b []byte) bool {
 	if len(b) == 0 {
 		return false
 	}
-	switch b[0] {
-	case ':':
-		return true
-	case 'd':
-		return sseFieldPrefixCandidate(b, "data:")
-	case 'e':
-		return sseFieldPrefixCandidate(b, "event:")
-	case 'i':
-		return sseFieldPrefixCandidate(b, "id:")
-	case 'r':
-		return sseFieldPrefixCandidate(b, "retry:")
+	for _, field := range []string{
+		"data:", "event:", "id:", "retry:",
+		"data\n", "event\n", "id\n", "retry\n",
+		"data\r\n", "event\r\n", "id\r\n", "retry\r\n",
+	} {
+		if sseFieldPrefixCandidate(b, field) {
+			return true
+		}
 	}
-	return false
+	return b[0] == ':'
 }
 
 func sseFieldPrefixCandidate(b []byte, field string) bool {
@@ -153,28 +152,6 @@ func sseFieldPrefixCandidate(b []byte, field string) bool {
 		return bytes.HasPrefix([]byte(field), b)
 	}
 	return bytes.HasPrefix(b, []byte(field))
-}
-
-// isSSEFieldPrefixPartial reports whether b is a strict prefix of a known
-// SSE field: the name may be completed by a later chunk, so these bytes
-// must stay buffered instead of being released.
-func isSSEFieldPrefixPartial(b []byte) bool {
-	if len(b) == 0 {
-		return false
-	}
-	for _, field := range []string{"data:", "event:", "id:", "retry:"} {
-		if len(b) < len(field) && bytes.HasPrefix([]byte(field), b) {
-			return true
-		}
-	}
-	return false
-}
-
-// sseDataLinePrefix reports whether b begins with an SSE data line. The
-// space after the colon is optional in SSE, so any payload bytes after
-// "data:" count as a data line.
-func sseDataLinePrefix(b []byte) bool {
-	return bytes.HasPrefix(b, []byte("data:"))
 }
 
 // takeEvent extracts the next complete SSE event when one is available.

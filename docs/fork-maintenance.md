@@ -519,12 +519,14 @@ The blocking-scope failover fixture in `sdk/cliproxy/service_executionregistry_t
 ## Plugin SSE metadata framing
 
 Same-format plugin streams may begin with `id:` or `retry:` before their data
-line. The deframer's initial, buffered, and partial-prefix detectors must agree
-on these fields so arbitrary HTTP chunk boundaries do not leak framing into the
+line. The deframer's initial and buffered detectors share the same complete/partial
+field recognition, including colonless empty-value fields terminated by LF or
+CRLF, so arbitrary HTTP chunk boundaries do not leak framing into the
 translated payload. No outer hook can reconstruct bytes already emitted by the
 parser. `executor_sse_metadata_fork_test.go` covers coalesced events, every split
 position, bytewise delivery, LF/CRLF boundaries, same-format adapter output, and
-metadata-like bare payloads. The same-format OpenAI/Gemini translators then use
+metadata-like bare payloads. EOF/error flushing retains the terminator of a
+field-only metadata line, without treating genuine bare field names as SSE. The same-format OpenAI/Gemini translators then use
 `common/sse_payload_fork.go` to extract only data lines, including metadata-led
 terminal markers, while dropping metadata-only frames and preserving bare input.
 This companion seam is required because detecting event boundaries alone leaves
