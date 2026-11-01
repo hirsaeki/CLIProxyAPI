@@ -110,7 +110,11 @@ discovery, even when a plugin also advertises multiple OAuth login providers.
 Without explicit model identifiers, use upstream's complete auth-provider lookup
 and static/executor fallback. RPC must advertise auth support for either the
 singular or plural capability while copying the model identifiers and preserving
-native-candidate negotiation. Keep `multi_auth_model_candidates_fork_test.go`
+native-candidate negotiation. Registration and reconfiguration must advertise
+upstream `multi_auth_providers` alongside the fork `host_features`; neither
+replaces the other, including when a plugin replies with an older schema.
+`rpc_lifecycle_features_fork_test.go` covers the wire keys and entries-only OAuth
+metadata combined with explicit model identifiers and native candidates. Keep `multi_auth_model_candidates_fork_test.go`
 alongside the upstream multi-portal tests to cover both native and RPC paths.
 
 Adding another upstream-owned integration file requires documenting why an

@@ -8,9 +8,10 @@ import (
 )
 
 type rpcLifecycleRequest struct {
-	ConfigYAML    []byte   `json:"config_yaml"`
-	SchemaVersion uint32   `json:"schema_version"`
-	HostFeatures  []string `json:"host_features,omitempty"`
+	ConfigYAML         []byte   `json:"config_yaml"`
+	SchemaVersion      uint32   `json:"schema_version"`
+	MultiAuthProviders bool     `json:"multi_auth_providers,omitempty"`
+	HostFeatures       []string `json:"host_features,omitempty"`
 }
 
 type rpcRegistration struct {
@@ -58,10 +59,17 @@ type rpcCapabilities struct {
 	QuotaProvider                     bool                         `json:"quota_provider"`
 }
 
+type rpcAuthProviderEntry struct {
+	Identifier string `json:"identifier"`
+	Name       string `json:"name,omitempty"`
+	Logo       string `json:"logo,omitempty"`
+}
+
 type rpcIdentifierResponse struct {
-	Identifier          string   `json:"identifier"`
-	Identifiers         []string `json:"identifiers,omitempty"`
-	CredentialProviders []string `json:"credential_providers,omitempty"`
+	Identifier          string                 `json:"identifier"`
+	Identifiers         []string               `json:"identifiers,omitempty"`
+	CredentialProviders []string               `json:"credential_providers,omitempty"`
+	Entries             []rpcAuthProviderEntry `json:"entries,omitempty"`
 }
 
 type rpcExecutorStreamResponse struct {
