@@ -96,7 +96,6 @@ them must stay local to the listed responsibility.
 | `internal/api/handlers/management/auth_files_v8.go` | Bound OAuth-start and credential-verification control request bodies to 1 MiB while preserving stricter outer limits and error status mapping |
 | `internal/api/handlers/management/auth_files_provider_oauth.go` | Restore exact preexisting auth-file bytes, including empty files, when plugin-login batch persistence rolls back |
 | `internal/api/middleware/request_logging.go` | Keep deferred error-body capture within the 1 MiB memory threshold when no file-source factory is available; do not limit bytes delivered to the handler |
-| `internal/api/middleware/response_writer.go` | Snapshot the streaming worker queue and logger at launch so finalization cannot race with delayed worker startup or discard queued log chunks |
 | `internal/api/response_compression.go` | Reject an unacceptable fallback representation when a supported encoding was selected and identity was excluded |
 | `internal/api/server.go`, `server_reload.go`, `server_routes.go`, `sdk/api/handlers/openai/openai_responses_handlers.go`, `openai_responses_websocket.go` | Read WebSocket compression policy from the owning Server at upgrade time rather than process-global state |
 | `internal/discovery/browse_queries.go`, `browse_resolver.go` | Enforce known-answer datagram size and use the fork-owned packet index for bounded cache processing |
@@ -298,6 +297,14 @@ go build -o test-output ./cmd/server && rm test-output
 ```
 
 ## Upstream Contribution Candidates
+
+Upstream now captures the streaming log queue and writer at worker launch and
+owns panic-safe, idempotent request-log finalization. The duplicate fork production
+seam in `internal/api/middleware/response_writer.go` is retired. Keep
+`response_writer_worker_lifetime_fork_test.go` to verify delayed workers drain
+their captured queue after the owner's fields are cleared, alongside upstream's
+handler-panic finalization regression. The separate 1 MiB no-file-factory request
+capture bound and per-server WebSocket compression policy remain necessary.
 
 The highest-value upstream contribution is a generic per-auth model candidate
 resolver seam. It should let a model provider receive the native candidates and
