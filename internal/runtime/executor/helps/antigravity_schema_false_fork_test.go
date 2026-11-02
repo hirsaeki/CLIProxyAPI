@@ -3,7 +3,7 @@ package helps
 import (
 	"testing"
 
-	"github.com/tidwall/sjson"
+	"fmt"
 )
 
 func TestAntigravityFalseSchemaValidationFork(t *testing.T) {
@@ -11,10 +11,7 @@ func TestAntigravityFalseSchemaValidationFork(t *testing.T) {
 		for _, schemaKey := range []string{"parameters", "parametersJsonSchema", "parameters_json_schema", "response", "responseJsonSchema", "response_json_schema"} {
 			path := "request.tools.0." + declarationsKey + ".0." + schemaKey
 			for _, schema := range []string{`false`, `{"anyOf":[false]}`, `{"properties":{"x":{"oneOf":[false]}}}`} {
-				payload, err := sjson.SetRaw("{}", path, schema)
-				if err != nil {
-					t.Fatal(err)
-				}
+				payload := fmt.Sprintf(`{"request":{"tools":[{%q:[{%q:%s}]}]}}`, declarationsKey, schemaKey, schema)
 				if ValidateAntigravityFalseSchemas([]byte(payload)) == nil {
 					t.Fatalf("missed unsupported schema at %s: %s", path, payload)
 				}
@@ -24,10 +21,7 @@ func TestAntigravityFalseSchemaValidationFork(t *testing.T) {
 	for _, configKey := range []string{"generationConfig", "generation_config"} {
 		for _, schemaKey := range []string{"responseSchema", "responseJsonSchema", "response_schema", "response_json_schema"} {
 			path := "request." + configKey + "." + schemaKey
-			payload, err := sjson.SetRaw("{}", path, `{"oneOf":[false]}`)
-			if err != nil {
-				t.Fatal(err)
-			}
+			payload := fmt.Sprintf(`{"request":{%q:{%q:{"oneOf":[false]}}}}`, configKey, schemaKey)
 			if ValidateAntigravityFalseSchemas([]byte(payload)) == nil {
 				t.Fatalf("missed unsupported response schema at %s", path)
 			}

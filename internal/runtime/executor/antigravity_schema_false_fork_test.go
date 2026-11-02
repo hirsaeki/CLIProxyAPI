@@ -8,12 +8,12 @@ import (
 	"testing"
 	"time"
 
+	"encoding/json"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	antigravityclaude "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/antigravity/claude"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
-	"github.com/tidwall/sjson"
 )
 
 func TestAntigravityRejectsFalseSchemaBeforeSendingFork(t *testing.T) {
@@ -48,7 +48,7 @@ func TestAntigravityFalseSchemaChecksFinalPayloadFork(t *testing.T) {
 	auth := &cliproxyauth.Auth{Metadata: map[string]any{"project_id": "project-1"}}
 	payload := []byte(`{"request":{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}}`)
 	ctx := helps.WithPayloadFinalizer(context.Background(), func(body []byte) []byte {
-		updated, err := sjson.SetRawBytes(body, "request.generationConfig.responseSchema", []byte(`{"anyOf":[false]}`))
+		updated, err := setFalseSchemaResponseFork(body, []byte(`{"anyOf":[false]}`))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -58,7 +58,7 @@ func TestAntigravityFalseSchemaChecksFinalPayloadFork(t *testing.T) {
 		t.Fatalf("payload rules bypassed native schema validation: %v", err)
 	}
 	ctxNested := helps.WithPayloadFinalizer(context.Background(), func(body []byte) []byte {
-		updated, err := sjson.SetRawBytes(body, "request.generationConfig.responseSchema", []byte(`{"contains":{"anyOf":[false]}}`))
+		updated, err := setFalseSchemaResponseFork(body, []byte(`{"contains":{"anyOf":[false]}}`))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -67,12 +67,12 @@ func TestAntigravityFalseSchemaChecksFinalPayloadFork(t *testing.T) {
 	if req, err := e.buildRequest(ctxNested, auth, "token", "gemini-3.6-flash-high", payload, false, "", antigravityBaseURLDaily); req != nil || err == nil {
 		t.Fatalf("payload rules bypassed nested native schema validation: %v", err)
 	}
-	blocked, errSet := sjson.SetRawBytes(payload, "request.generationConfig.responseSchema", []byte(`{"anyOf":[false]}`))
+	blocked, errSet := setFalseSchemaResponseFork(payload, []byte(`{"anyOf":[false]}`))
 	if errSet != nil {
 		t.Fatal(errSet)
 	}
 	ctx = helps.WithPayloadFinalizer(context.Background(), func(body []byte) []byte {
-		updated, err := sjson.DeleteBytes(body, "request.generationConfig.responseSchema")
+		updated, err := setFalseSchemaResponseFork(body, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -114,4 +114,29 @@ func TestAntigravityCountTokensRejectsFalseSchemaFork(t *testing.T) {
 	if requests.Load() != 0 {
 		t.Fatalf("unsupported schema reached upstream %d times", requests.Load())
 	}
+}
+
+// setFalseSchemaResponseFork is deliberately independent of the production JSON
+// library so this fixture exercises both sides of upstream parser migrations.
+func setFalseSchemaResponseFork(body, schema []byte) ([]byte, error) {
+	var root map[string]any
+	if err := json.Unmarshal(body, &root); err != nil {
+		return nil, err
+	}
+	request, _ := root["request"].(map[string]any)
+	if request == nil {
+		request = map[string]any{}
+		root["request"] = request
+	}
+	config, _ := request["generationConfig"].(map[string]any)
+	if config == nil {
+		config = map[string]any{}
+		request["generationConfig"] = config
+	}
+	if schema == nil {
+		delete(config, "responseSchema")
+	} else {
+		config["responseSchema"] = json.RawMessage(schema)
+	}
+	return json.Marshal(root)
 }

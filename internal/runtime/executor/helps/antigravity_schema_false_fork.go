@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
-	"github.com/tidwall/gjson"
 )
 
 // ValidateAntigravityFalseSchemas runs after payload rules, without rewriting
@@ -12,7 +11,7 @@ import (
 // Schema messages, which cannot carry a boolean false schema. Fail locally rather
 // than silently broadening the constraint or sending an unsupported schema.
 func ValidateAntigravityFalseSchemas(payload []byte) error {
-	request := gjson.GetBytes(payload, "request")
+	request := util.GetGJSONBytesNoCopy(payload, "request")
 	for i, tool := range request.Get("tools").Array() {
 		for _, declarationsKey := range []string{"functionDeclarations", "function_declarations"} {
 			for j, declaration := range tool.Get(declarationsKey).Array() {

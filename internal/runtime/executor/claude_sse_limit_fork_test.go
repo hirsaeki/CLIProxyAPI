@@ -11,11 +11,11 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
-	"github.com/tidwall/gjson"
 )
 
 func TestClaudeExecutorSSEEventLimitFork(t *testing.T) {
@@ -66,7 +66,7 @@ func TestClaudeExecutorSSEEventLimitFork(t *testing.T) {
 				}
 				for _, line := range strings.Split(string(chunk.Payload), "\n") {
 					payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-					if gjson.Get(payload, "choices.0.finish_reason").String() != "" {
+					if util.GetGJSONBytesNoCopy([]byte(payload), "choices.0.finish_reason").String() != "" {
 						t.Error("oversized event produced a successful finish reason")
 					}
 				}

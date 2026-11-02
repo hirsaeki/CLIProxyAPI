@@ -24,7 +24,6 @@ import (
 	. "github.com/router-for-me/CLIProxyAPI/v8/internal/constant"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
-	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	log "github.com/sirupsen/logrus"
@@ -357,7 +356,7 @@ type claudeSSEStreamState struct {
 	sawBareMessageJSON bool
 	trailingNewlines   int
 	currentEvent       string
-	eventData          bytes.Buffer
+	eventData          [][]byte
 	lineBuf            bytes.Buffer
 }
 
@@ -374,7 +373,7 @@ func (s *claudeSSEStreamState) ObserveChunk(chunk []byte) {
 		s.eventBytes++
 		if b == '\n' {
 			s.observeLine(s.lineBuf.Bytes())
-			helps.ResetClaudeSSEBuffer(&s.lineBuf)
+			s.resetLineBufferFork()
 			continue
 		}
 		s.lineBuf.WriteByte(b)
@@ -388,18 +387,19 @@ func (s *claudeSSEStreamState) FlushPendingLine() {
 	}
 	if s.lineBuf.Len() > 0 {
 		s.observeLine(s.lineBuf.Bytes())
-		helps.ResetClaudeSSEBuffer(&s.lineBuf)
+		s.resetLineBufferFork()
 	}
 	s.flushEventData()
 }
 
 func (s *claudeSSEStreamState) flushEventData() {
-	if s.eventData.Len() > 0 {
-		joined := bytes.TrimSpace(s.eventData.Bytes())
+	s.flushBoundedEventDataFork()
+	if len(s.eventData) > 0 {
+		joined := bytes.TrimSpace(bytes.Join(s.eventData, []byte("\n")))
+		s.eventData = s.eventData[:0]
 		if len(joined) > 0 && gjson.ValidBytes(joined) {
 			s.observeJSONPayload(joined, true)
 		}
-		helps.ResetClaudeSSEBuffer(&s.eventData)
 	}
 }
 
@@ -431,10 +431,10 @@ func (s *claudeSSEStreamState) observeLine(line []byte) {
 	if bytes.HasPrefix(trimmed, []byte("data:")) {
 		payload := bytes.TrimSpace(trimmed[len("data:"):])
 		if len(payload) > 0 {
-			if s.eventData.Len() > 0 {
-				s.eventData.WriteByte('\n')
+			if s.boundedEventData.Len() > 0 {
+				s.boundedEventData.WriteByte('\n')
 			}
-			s.eventData.Write(payload)
+			s.boundedEventData.Write(payload)
 		}
 		return
 	}

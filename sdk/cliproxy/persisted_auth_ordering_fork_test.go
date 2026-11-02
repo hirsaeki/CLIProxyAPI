@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/watcher"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
-	"github.com/tidwall/gjson"
 )
 
 // A file snapshot can be queued before persistence but consumed before the
@@ -108,7 +108,7 @@ func TestPersistedAuthSurvivesPreHookWatcherSnapshotFork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := gjson.GetBytes(data, "prefix").String(); got != "pfx-9" {
+	if got := util.GetGJSONBytesNoCopy(data, "prefix").String(); got != "pfx-9" {
 		t.Errorf("persisted prefix=%q, want pfx-9", got)
 	}
 	current, ok := manager.GetByID(authID)
