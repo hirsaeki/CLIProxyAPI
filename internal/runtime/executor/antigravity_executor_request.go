@@ -88,9 +88,6 @@ func (e *AntigravityExecutor) buildRequest(ctx context.Context, auth *cliproxyau
 
 		payloadStrBytes := applyAntigravityNativeSignatureReplayIfNeeded(modelName, []byte(payloadStr))
 		payloadStrBytes = helps.FinalizePayload(ctx, payloadStrBytes)
-		if errSchema := helps.ValidateAntigravityFalseSchemas(payloadStrBytes); errSchema != nil {
-			return nil, statusErr{code: http.StatusBadRequest, msg: errSchema.Error()}
-		}
 		bodyReader = bytes.NewReader(payloadStrBytes)
 		if e.cfg != nil && e.cfg.RequestLog {
 			payloadLog = append([]byte(nil), payloadStrBytes...)
@@ -106,9 +103,6 @@ func (e *AntigravityExecutor) buildRequest(ctx context.Context, auth *cliproxyau
 
 		payload = applyAntigravityNativeSignatureReplayIfNeeded(modelName, payload)
 		payload = helps.FinalizePayload(ctx, payload)
-		if errSchema := helps.ValidateAntigravityFalseSchemas(payload); errSchema != nil {
-			return nil, statusErr{code: http.StatusBadRequest, msg: errSchema.Error()}
-		}
 		bodyReader = bytes.NewReader(payload)
 		if e.cfg != nil && e.cfg.RequestLog {
 			payloadLog = append([]byte(nil), payload...)
@@ -128,7 +122,7 @@ func (e *AntigravityExecutor) buildRequest(ctx context.Context, auth *cliproxyau
 	// 	}
 	// }
 
-	httpReq, errReq := http.NewRequestWithContext(ctx, http.MethodPost, requestURL.String(), bodyReader)
+	httpReq, errReq := helps.NewAntigravityRequestWithValidatedSchemas(ctx, http.MethodPost, requestURL.String(), bodyReader)
 	if errReq != nil {
 		return nil, errReq
 	}

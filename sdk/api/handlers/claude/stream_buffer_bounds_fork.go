@@ -16,9 +16,10 @@ import (
 // claudeSSEBufferBoundsFork bounds the entire event, including partial lines.
 // A single data buffer avoids allocation overhead proportional to the line count.
 type claudeSSEBufferBoundsFork struct {
-	maxEventBytes int
-	eventBytes    int
-	bufferError   *interfaces.ErrorMessage
+	boundedEventData bytes.Buffer
+	maxEventBytes    int
+	eventBytes       int
+	bufferError      *interfaces.ErrorMessage
 }
 
 // preflightSSEChunkFork checks boundaries without changing the accepted parser
@@ -70,7 +71,7 @@ func (s *claudeSSEStreamState) rejectSSEChunkFork() {
 		Error:      errors.New("upstream SSE event exceeds maximum size"),
 	}
 	s.lineBuf = bytes.Buffer{}
-	s.eventData = bytes.Buffer{}
+	s.boundedEventData = bytes.Buffer{}
 	s.currentEvent = ""
 	s.eventBytes = 0
 }
@@ -105,4 +106,20 @@ func (h *ClaudeCodeAPIHandler) writeClaudeStreamTerminalErrorFork(w io.Writer, s
 	errorBytes, _ := json.Marshal(h.toClaudeError(errMsg))
 	_, _ = fmt.Fprintf(w, "event: error\ndata: %s\n\n", errorBytes)
 	state.sawErrorEvent = true
+}
+
+// resetLineBufferFork keeps retained line storage bounded independently of parsing.
+func (s *claudeSSEStreamState) resetLineBufferFork() {
+	helps.ResetClaudeSSEBuffer(&s.lineBuf)
+}
+
+// flushBoundedEventDataFork owns the fork buffer; the upstream event slice stays empty.
+func (s *claudeSSEStreamState) flushBoundedEventDataFork() {
+	if s.boundedEventData.Len() > 0 {
+		joined := bytes.TrimSpace(s.boundedEventData.Bytes())
+		if len(joined) > 0 && json.Valid(joined) {
+			s.observeJSONPayload(joined, true)
+		}
+		helps.ResetClaudeSSEBuffer(&s.boundedEventData)
+	}
 }

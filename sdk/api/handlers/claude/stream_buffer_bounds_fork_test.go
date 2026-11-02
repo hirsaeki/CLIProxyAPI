@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
-	"github.com/tidwall/gjson"
 )
 
 func claudeBoundedStateFork(limit int) *claudeSSEStreamState {
@@ -36,8 +36,8 @@ func TestClaudeSSEBufferLimitsFork(t *testing.T) {
 			state := claudeBoundedStateFork(limit)
 			for i := 0; i < limit+1 && state.bufferError == nil; i++ {
 				state.ObserveChunk([]byte(tc.chunk))
-				if state.lineBuf.Len()+state.eventData.Len() > limit {
-					t.Fatalf("retained payload exceeds budget: line=%d data=%d", state.lineBuf.Len(), state.eventData.Len())
+				if state.lineBuf.Len()+state.boundedEventData.Len() > limit {
+					t.Fatalf("retained payload exceeds budget: line=%d data=%d", state.lineBuf.Len(), state.boundedEventData.Len())
 				}
 			}
 			if state.bufferError == nil || state.bufferError.StatusCode != http.StatusBadGateway {
@@ -49,7 +49,7 @@ func TestClaudeSSEBufferLimitsFork(t *testing.T) {
 			if state.bufferError != originalError || state.sawMessageStop || state.sawErrorEvent {
 				t.Fatal("overflow was cleared or a discarded terminal event was observed")
 			}
-			if state.lineBuf.Cap() != 0 || state.eventData.Cap() != 0 || state.currentEvent != "" {
+			if state.lineBuf.Cap() != 0 || state.boundedEventData.Cap() != 0 || state.currentEvent != "" {
 				t.Fatal("overflow retained its buffers")
 			}
 		})
@@ -186,7 +186,7 @@ func TestClaudeStreamFirstChunkOverflowFork(t *testing.T) {
 				if recorder.Code != http.StatusOK || strings.Count(recorder.Body.String(), "event: error") != 1 {
 					t.Fatalf("committed overflow response = %d %q", recorder.Code, recorder.Body.String())
 				}
-			} else if recorder.Code != http.StatusBadGateway || gjson.GetBytes(recorder.Body.Bytes(), "error.type").String() != "api_error" {
+			} else if recorder.Code != http.StatusBadGateway || util.GetGJSONBytesNoCopy(recorder.Body.Bytes(), "error.type").String() != "api_error" {
 				t.Fatalf("uncommitted overflow response = %d %q", recorder.Code, recorder.Body.String())
 			}
 		})
@@ -237,7 +237,7 @@ func TestClaudeStreamOverflowPreservesPendingErrorFork(t *testing.T) {
 			if got := recorder.Body.String(); got != want {
 				t.Fatalf("pending upstream error was duplicated or rejected bytes leaked: got %q want %q", got, want)
 			}
-			if !state.sawErrorEvent || state.sawMessageStop || state.lineBuf.Cap() != 0 || state.eventData.Cap() != 0 {
+			if !state.sawErrorEvent || state.sawMessageStop || state.lineBuf.Cap() != 0 || state.boundedEventData.Cap() != 0 {
 				t.Fatal("pending error classification or overflow cleanup failed")
 			}
 		})
@@ -262,14 +262,14 @@ func TestClaudeSSEPreflightKeepsInputBuffersFork(t *testing.T) {
 	state := claudeBoundedStateFork(64)
 	state.ObserveChunk([]byte("data: x\n\xe2"))
 	partial := bytes.Clone(state.lineBuf.Bytes())
-	data := bytes.Clone(state.eventData.Bytes())
+	data := bytes.Clone(state.boundedEventData.Bytes())
 	count := state.eventBytes
 	chunk := []byte("\x80\x83\ndata: y\n")
 	original := bytes.Clone(chunk)
 	if !state.preflightSSEChunkFork(chunk) {
 		t.Fatal("valid preflight was rejected")
 	}
-	if !bytes.Equal(chunk, original) || !bytes.Equal(state.lineBuf.Bytes(), partial) || !bytes.Equal(state.eventData.Bytes(), data) || state.eventBytes != count {
+	if !bytes.Equal(chunk, original) || !bytes.Equal(state.lineBuf.Bytes(), partial) || !bytes.Equal(state.boundedEventData.Bytes(), data) || state.eventBytes != count {
 		t.Fatal("preflight modified an input buffer or accepted parser state")
 	}
 }
@@ -294,13 +294,13 @@ func TestClaudeSSEBufferRetentionFork(t *testing.T) {
 				state.FlushPendingLine()
 			} else {
 				state.ObserveChunk([]byte("\n"))
-				if state.lineBuf.Cap() != 0 || state.eventData.Len() <= retainLimit {
-					t.Fatalf("complete line storage was not released or pending event lost: line cap=%d data len=%d", state.lineBuf.Cap(), state.eventData.Len())
+				if state.lineBuf.Cap() != 0 || state.boundedEventData.Len() <= retainLimit {
+					t.Fatalf("complete line storage was not released or pending event lost: line cap=%d data len=%d", state.lineBuf.Cap(), state.boundedEventData.Len())
 				}
 				state.ObserveChunk([]byte("\n"))
 			}
-			if state.bufferError != nil || state.lineBuf.Len() != 0 || state.eventData.Len() != 0 || state.lineBuf.Cap() > retainLimit || state.eventData.Cap() != 0 {
-				t.Fatalf("large completed event retained storage: error=%v line len/cap=%d/%d data len/cap=%d/%d", state.bufferError, state.lineBuf.Len(), state.lineBuf.Cap(), state.eventData.Len(), state.eventData.Cap())
+			if state.bufferError != nil || state.lineBuf.Len() != 0 || state.boundedEventData.Len() != 0 || state.lineBuf.Cap() > retainLimit || state.boundedEventData.Cap() != 0 {
+				t.Fatalf("large completed event retained storage: error=%v line len/cap=%d/%d data len/cap=%d/%d", state.bufferError, state.lineBuf.Len(), state.lineBuf.Cap(), state.boundedEventData.Len(), state.boundedEventData.Cap())
 			}
 		})
 	}
@@ -311,9 +311,9 @@ func TestClaudeSSEBufferRetentionFork(t *testing.T) {
 		state.ObserveChunk(line)
 		lineStorage, lineCapacity := &state.lineBuf.Bytes()[0], state.lineBuf.Cap()
 		state.ObserveChunk([]byte("\n"))
-		dataStorage, dataCapacity := &state.eventData.Bytes()[0], state.eventData.Cap()
+		dataStorage, dataCapacity := &state.boundedEventData.Bytes()[0], state.boundedEventData.Cap()
 		state.ObserveChunk([]byte("\n"))
-		if state.lineBuf.Cap() != lineCapacity || state.eventData.Cap() != dataCapacity {
+		if state.lineBuf.Cap() != lineCapacity || state.boundedEventData.Cap() != dataCapacity {
 			t.Fatal("reset released a small reusable buffer")
 		}
 		state.ObserveChunk(line)
@@ -321,12 +321,76 @@ func TestClaudeSSEBufferRetentionFork(t *testing.T) {
 			t.Fatal("small line buffer was reallocated")
 		}
 		state.ObserveChunk([]byte("\n"))
-		if &state.eventData.Bytes()[0] != dataStorage {
+		if &state.boundedEventData.Bytes()[0] != dataStorage {
 			t.Fatal("small event data buffer was reallocated")
 		}
 		state.ObserveChunk([]byte("\n"))
-		if state.bufferError != nil || state.lineBuf.Cap() != lineCapacity || state.eventData.Cap() != dataCapacity {
+		if state.bufferError != nil || state.lineBuf.Cap() != lineCapacity || state.boundedEventData.Cap() != dataCapacity {
 			t.Fatal("small buffer reuse changed parsing or retained capacity")
+		}
+	})
+}
+
+// The upstream slice is deliberately retained for merge compatibility, but only
+// the fork-owned bounded buffer may collect event data. Check each incremental
+// byte so a future upstream writer cannot hide behind a later boundary reset.
+func TestClaudeSSEUpstreamEventSliceRemainsUnusedFork(t *testing.T) {
+	assertUnused := func(t *testing.T, state *claudeSSEStreamState) {
+		t.Helper()
+		if len(state.eventData) != 0 || cap(state.eventData) != 0 {
+			t.Fatalf("upstream event slice acquired storage: len=%d cap=%d", len(state.eventData), cap(state.eventData))
+		}
+	}
+	observeBytes := func(t *testing.T, state *claudeSSEStreamState, text string) {
+		t.Helper()
+		for i := range len(text) {
+			state.ObserveChunk([]byte(text[i : i+1]))
+			assertUnused(t, state)
+		}
+	}
+	t.Run("multiline and boundary", func(t *testing.T) {
+		state := claudeBoundedStateFork(256)
+		observeBytes(t, state, "event: error\ndata: {\"type\":\ndata: \"error\",\"error\":{}}\n")
+		if state.bufferError != nil || state.sawErrorEvent || state.boundedEventData.Len() == 0 {
+			t.Fatal("accepted multiline event was not held in the bounded buffer")
+		}
+		observeBytes(t, state, "\n")
+		if state.bufferError != nil || !state.sawErrorEvent || state.boundedEventData.Len() != 0 {
+			t.Fatal("multiline event was not classified and cleared at its boundary")
+		}
+		observeBytes(t, state, "data: {\"type\":\"message_stop\"}\n\n")
+		if !state.sawMessageStop || state.bufferError != nil {
+			t.Fatal("following event did not reuse the bounded path")
+		}
+		state.FlushPendingLine()
+		assertUnused(t, state)
+	})
+	t.Run("flush pending partial line", func(t *testing.T) {
+		state := claudeBoundedStateFork(256)
+		observeBytes(t, state, "data: {\"type\":\"message_stop\"}")
+		if state.sawMessageStop || state.bufferError != nil {
+			t.Fatal("partial line was prematurely classified")
+		}
+		state.FlushPendingLine()
+		assertUnused(t, state)
+		if !state.sawMessageStop || state.lineBuf.Len() != 0 || state.boundedEventData.Len() != 0 {
+			t.Fatal("pending line was not classified and cleared on flush")
+		}
+	})
+	t.Run("reject and sticky flush", func(t *testing.T) {
+		state := claudeBoundedStateFork(64)
+		observeBytes(t, state, "data: {\"type\":")
+		state.ObserveChunk([]byte(strings.Repeat("x", 65)))
+		assertUnused(t, state)
+		if state.bufferError == nil || state.sawErrorEvent || state.sawMessageStop || state.boundedEventData.Cap() != 0 {
+			t.Fatal("overflow did not reject and release the pending bounded event")
+		}
+		originalError := state.bufferError
+		observeBytes(t, state, "\n\ndata: {\"type\":\"message_stop\"}\n\n")
+		state.FlushPendingLine()
+		assertUnused(t, state)
+		if state.bufferError != originalError || state.sawMessageStop || state.lineBuf.Cap() != 0 || state.boundedEventData.Cap() != 0 {
+			t.Fatal("rejected state accepted or retained subsequent data")
 		}
 	})
 }

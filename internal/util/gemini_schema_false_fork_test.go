@@ -2,8 +2,6 @@ package util
 
 import (
 	"testing"
-
-	"github.com/tidwall/gjson"
 )
 
 func TestAllFalseSchemaUnionPreservedFork(t *testing.T) {
@@ -34,12 +32,12 @@ func TestAllFalseSchemaUnionPreservedFork(t *testing.T) {
 		for _, tc := range cases {
 			t.Run(cleanerName+"/"+tc.name, func(t *testing.T) {
 				cleaned := clean(tc.input)
-				if !allFalseSchemaUnion(gjson.Get(cleaned, tc.path).Array()) {
+				if !allFalseSchemaUnion(GetGJSONBytesNoCopy([]byte(cleaned), tc.path).Array()) {
 					t.Fatalf("unsatisfiable union was lost: %s", cleaned)
 				}
 				compareJSON(t, cleaned, clean(cleaned))
 				chained := CleanJSONSchemaForAntigravityClaudeTool(CleanJSONSchemaForAntigravity(tc.input), false)
-				if !allFalseSchemaUnion(gjson.Get(chained, tc.path).Array()) {
+				if !allFalseSchemaUnion(GetGJSONBytesNoCopy([]byte(chained), tc.path).Array()) {
 					t.Fatalf("translator/executor cleaning lost unsatisfiable union: %s", chained)
 				}
 			})
@@ -63,7 +61,7 @@ func TestFalseSchemaUnionDataAndMixedBranchesFork(t *testing.T) {
 		}
 	}
 	for _, input := range []string{`[]`, `[null]`, `[{"required":["x"]}]`, `[false,true]`} {
-		if allFalseSchemaUnion(gjson.Parse(input).Array()) {
+		if allFalseSchemaUnion(ParseGJSONBytesNoCopy([]byte(input)).Array()) {
 			t.Fatalf("non-all-false input classified as unsatisfiable: %s", input)
 		}
 	}
@@ -91,9 +89,38 @@ func TestContainsFalseSchemaScopesSchemaNodesFork(t *testing.T) {
 }
 
 func TestToolSearchAllFalseSchemaPreservedFork(t *testing.T) {
-	tool := gjson.Parse(`{"type":"tool_search","execution":"client","parameters":{"type":"object","anyOf":[false]}}`)
+	tool := ParseGJSONBytesNoCopy([]byte(`{"type":"tool_search","execution":"client","parameters":{"type":"object","anyOf":[false]}}`))
 	got := buildGeminiToolSearchParametersSchema(tool)
-	if !allFalseSchemaUnion(gjson.GetBytes(got, "anyOf").Array()) {
+	if !allFalseSchemaUnion(GetGJSONBytesNoCopy(got, "anyOf").Array()) {
 		t.Fatalf("tool search substituted a permissive default: %s", got)
+	}
+}
+
+func TestContainsFalseSchemaDuplicateMapKeysFork(t *testing.T) {
+	for _, keyword := range falseSchemaMapKeywords {
+		for _, entries := range []string{
+			`"x":true,"x":false`,
+			`"x":false,"x":true`,
+			`"x":{"type":"string"},"x":{"anyOf":[false]}`,
+			`"x":{"anyOf":[false]},"x":{"type":"string"}`,
+		} {
+			input := `{"` + keyword + `":{` + entries + `}}`
+			if !ContainsFalseSchema(input) {
+				t.Fatalf("duplicate schema key hid false schema: %s", input)
+			}
+		}
+	}
+}
+
+func TestFindSchemaUnionPathsPreservesDuplicateMapKeysFork(t *testing.T) {
+	input := `{"properties":{"a.b":{"anyOf":[false]},"a.b":{"anyOf":[false]}}}`
+	paths := findSchemaUnionPaths(input)["anyOf"]
+	if len(paths) != 2 || paths[0] != `properties.a\.b.anyOf` || paths[1] != paths[0] {
+		t.Fatalf("duplicate escaped property paths were collapsed or changed: %v", paths)
+	}
+	input = `{"properties":{"z":{"anyOf":[false]},"a":{"anyOf":[false]},"z":{"oneOf":[false]}}}`
+	got := findSchemaUnionPaths(input)
+	if len(got["anyOf"]) != 2 || got["anyOf"][0] != "properties.z.anyOf" || got["anyOf"][1] != "properties.a.anyOf" || len(got["oneOf"]) != 1 || got["oneOf"][0] != "properties.z.oneOf" {
+		t.Fatalf("schema entry traversal lost source order or a duplicate: %v", got)
 	}
 }

@@ -407,7 +407,24 @@ an impossible schema. Antigravity's compatibility path conservatively rejects
 false schemas locally with HTTP 400 rather than broadening them or sending an
 unsupported native Schema value. Its validation runs after payload rules, does
 not rewrite their output, and covers generation, streaming/rebuilt requests and
-counting. JSON-shaped conversation data and native response
+counting. The generation path validates the replayable HTTP body at the request
+construction seam, after the upstream byte or Doc finalizer has finished. The
+fork-owned request helper synchronously validates a `bytes.Reader` snapshot
+without consuming or copying its transport bytes; an unexpected writer shape or
+another replayable reader falls back to validating a body copy. The count-token
+path validates finalized payload bytes after request construction, before logging
+or transport. Neither path reruns payload rules. Schema helpers use the existing
+JSON compatibility utilities and preserve ordered, duplicate-key traversal rather
+than depending on concrete parser result types.
+
+Claude's bounded event storage lives in the fork-owned `boundedEventData` field.
+The upstream `eventData` slice and parser block remain structurally intact for
+upstream changes, but no live path writes that slice. The fork regression checks
+that it stays empty through multi-line events, boundaries, flushes, and rejection.
+If upstream introduces another writer, reconcile ownership before syncing; do not
+allow an unbounded parallel buffer or duplicate event observation.
+
+JSON-shaped conversation data and native response
 `additionalProperties: false` remain unaffected. This is an upstream contribution
 candidate; no general schema satisfiability solver is introduced. The existing
 approximate `allOf`/conditional reductions are outside this narrow union-rewrite

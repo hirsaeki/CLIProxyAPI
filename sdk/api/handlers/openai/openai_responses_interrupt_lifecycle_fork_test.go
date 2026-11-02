@@ -12,7 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
-	"github.com/tidwall/gjson"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 )
 
 func TestResponsesTerminalFrameEndsLocalInterruptBeforeStreamCloseFork(t *testing.T) {
@@ -77,7 +77,7 @@ func TestResponsesTerminalFrameEndsLocalInterruptBeforeStreamCloseFork(t *testin
 				if errRead != nil {
 					t.Fatalf("read %s: %v", event, errRead)
 				}
-				if gjson.GetBytes(got, "type").String() != event || gjson.GetBytes(got, "response.id").String() != responseID {
+				if util.GetGJSONBytesNoCopy(got, "type").String() != event || util.GetGJSONBytesNoCopy(got, "response.id").String() != responseID {
 					t.Fatalf("expected %s for %s, got %s", event, responseID, got)
 				}
 			}
