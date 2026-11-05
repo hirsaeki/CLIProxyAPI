@@ -436,7 +436,9 @@ upstream first-chunk path then observes accepted bytes once through the bounded
 wrapper. Later chunks use the options wrapper, which invokes upstream's original
 terminal-error callback on overflow before `ChunkError` cancels. This preserves
 upstream logging and duplicate-error suppression while withholding rejected
-bytes. Keep callback-delegation, observer-parity, multiline, boundary, flush, and
+bytes. Preflight reuse is scoped to the exact slice consumed once by the
+synchronous callback; it is cleared on observation, flush, rejection, and callback
+exit. Do not mutate those bytes or parser state before observation. Keep callback-delegation, observer-parity, multiline, boundary, flush, and
 rejection regressions; never add an unbounded parallel buffer or observe a
 payload twice.
 

@@ -15,6 +15,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
+	sdkconfig "github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
 )
 
 func claudeBoundedStateFork(limit int) *claudeSSEStreamStateFork {
@@ -168,7 +169,7 @@ func TestClaudeStreamFirstChunkOverflowFork(t *testing.T) {
 			recorder := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(recorder)
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
-			handler := NewClaudeCodeAPIHandler(&handlers.BaseAPIHandler{})
+			handler := NewClaudeCodeAPIHandler(handlers.NewBaseAPIHandlers(&sdkconfig.SDKConfig{RequestLog: true}, nil))
 			state := claudeBoundedStateFork(64)
 			if committed {
 				c.Header("Content-Type", "text/event-stream")
@@ -186,6 +187,11 @@ func TestClaudeStreamFirstChunkOverflowFork(t *testing.T) {
 				t.Fatalf("accepted=%t cancellations=%d body=%q", accepted, cancellations, recorder.Body.String())
 			}
 			if committed {
+				value, _ := c.Get("API_RESPONSE_ERROR")
+				logged, _ := value.([]*interfaces.ErrorMessage)
+				if len(logged) != 1 || logged[0] != state.bufferError {
+					t.Fatalf("committed overflow logs = %+v, want one buffer error", logged)
+				}
 				if recorder.Code != http.StatusOK || strings.Count(recorder.Body.String(), "event: error") != 1 {
 					t.Fatalf("committed overflow response = %d %q", recorder.Code, recorder.Body.String())
 				}
@@ -482,4 +488,60 @@ func TestClaudeSSEBoundedObserverMatchesUpstreamFork(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestClaudeSSEPreflightReuseIsScopedFork(t *testing.T) {
+	t.Run("consumed once", func(t *testing.T) {
+		state := claudeBoundedStateFork(64)
+		chunk := []byte("data: {\"partial\":")
+		calls := 0
+		opts := boundClaudeStreamOptionsFork(state, handlers.StreamForwardOptions{
+			WriteChunk: func(got []byte) {
+				calls++
+				if len(state.preflightChunkFork) != len(chunk) || &state.preflightChunkFork[0] != &got[0] {
+					t.Fatal("accepted chunk did not share its preflight")
+				}
+				state.ObserveChunk(got)
+				if state.preflightChunkFork != nil || state.lineBuf.Len() != len(chunk) {
+					t.Fatal("preflight was retained or accepted bytes were observed more than once")
+				}
+			},
+		})
+		opts.WriteChunk(chunk)
+		if calls != 1 || state.preflightChunkFork != nil {
+			t.Fatal("preflight escaped its callback")
+		}
+	})
+	t.Run("different chunk is checked", func(t *testing.T) {
+		state := claudeBoundedStateFork(8)
+		state.ObserveChunk([]byte("123456"))
+		opts := boundClaudeStreamOptionsFork(state, handlers.StreamForwardOptions{
+			WriteChunk: func([]byte) { state.ObserveChunk([]byte("xxxx")) },
+		})
+		// The accepted chunk resets the event budget; the different equal-length
+		// chunk does not. It must not inherit the first chunk's approval.
+		opts.WriteChunk([]byte("\n\nab"))
+		if state.bufferError == nil || state.preflightChunkFork != nil {
+			t.Fatal("a different chunk bypassed bounds or retained input storage")
+		}
+	})
+	t.Run("different length is checked", func(t *testing.T) {
+		state := claudeBoundedStateFork(64)
+		chunk := []byte(strings.Repeat("x", 65))
+		opts := boundClaudeStreamOptionsFork(state, handlers.StreamForwardOptions{
+			WriteChunk: func([]byte) { state.ObserveChunk(chunk) },
+		})
+		opts.WriteChunk(chunk[:64])
+		if state.bufferError == nil || state.preflightChunkFork != nil {
+			t.Fatal("a larger slice bypassed bounds or retained input storage")
+		}
+	})
+	t.Run("unconsumed callback clears input", func(t *testing.T) {
+		state := claudeBoundedStateFork(64)
+		opts := boundClaudeStreamOptionsFork(state, handlers.StreamForwardOptions{WriteChunk: func([]byte) {}})
+		opts.WriteChunk([]byte("unused"))
+		if state.preflightChunkFork != nil {
+			t.Fatal("unused callback retained the input chunk")
+		}
+	})
 }

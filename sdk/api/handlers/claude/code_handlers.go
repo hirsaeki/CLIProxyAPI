@@ -326,7 +326,9 @@ func (h *ClaudeCodeAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON [
 				return
 			}
 
-			if !h.acceptClaudeStreamChunkFork(c, flusher, func(err error) { cliCancel(err) }, nil, chunk, committed) {
+			var streamState claudeSSEStreamStateFork
+			streamState.trailingNewlines = 2
+			if !h.acceptClaudeStreamChunkFork(c, flusher, func(err error) { cliCancel(err) }, &streamState, chunk, committed) {
 				stopKeepAlive()
 				return
 			}
@@ -336,8 +338,6 @@ func (h *ClaudeCodeAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON [
 			commitSSE()
 
 			// Write the first chunk
-			var streamState claudeSSEStreamStateFork
-			streamState.trailingNewlines = 2
 			streamState.ObserveChunk(chunk)
 			if len(chunk) > 0 {
 				_, _ = c.Writer.Write(chunk)

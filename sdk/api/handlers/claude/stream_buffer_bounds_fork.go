@@ -2,6 +2,7 @@ package claude
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,6 +22,10 @@ import (
 type claudeSSEStreamStateFork struct {
 	claudeSSEStreamState
 	claudeSSEBufferBoundsFork
+
+	// A synchronous callback may consume the exact preflighted chunk once.
+	// The callback must not mutate the bytes or parser state before observation.
+	preflightChunkFork []byte
 }
 
 // claudeSSEBufferBoundsFork bounds the entire event, including partial lines.
@@ -72,6 +77,7 @@ func (s *claudeSSEStreamStateFork) preflightSSEChunkFork(chunk []byte) bool {
 }
 
 func (s *claudeSSEStreamStateFork) rejectSSEChunkFork() {
+	s.preflightChunkFork = nil
 	// A boundary added before our terminal error can complete an already written
 	// upstream error that lacked its blank line. Classify only those accepted
 	// bytes once, so that error is not duplicated. No rejected bytes are parsed.
@@ -93,13 +99,14 @@ func (h *ClaudeCodeAPIHandler) acceptClaudeStreamChunkFork(c *gin.Context, flush
 		state = &claudeSSEStreamStateFork{claudeSSEStreamState: claudeSSEStreamState{trailingNewlines: 2}}
 	}
 	if state.bufferError == nil && state.preflightSSEChunkFork(chunk) {
+		state.preflightChunkFork = chunk
 		return true
 	}
 	if state.bufferError == nil {
 		state.rejectSSEChunkFork()
 	}
 	if committed {
-		h.LoggingAPIResponseError(c, state.bufferError)
+		h.LoggingAPIResponseError(context.WithValue(c, "gin", c), state.bufferError)
 		h.writeClaudeStreamTerminalErrorFork(c.Writer, state, state.bufferError)
 		flusher.Flush()
 	} else {
@@ -160,6 +167,8 @@ func boundClaudeStreamOptionsFork(state *claudeSSEStreamStateFork, opts handlers
 			return
 		}
 		if writeChunk != nil {
+			state.preflightChunkFork = chunk
+			defer func() { state.preflightChunkFork = nil }()
 			writeChunk(chunk)
 		}
 	}
@@ -185,11 +194,15 @@ func boundClaudeStreamOptionsFork(state *claudeSSEStreamStateFork, opts handlers
 }
 
 func (s *claudeSSEStreamStateFork) ObserveChunk(chunk []byte) {
+	preflighted := s.preflightChunkFork
+	s.preflightChunkFork = nil
 	if len(chunk) == 0 || s.bufferError != nil {
 		return
 	}
-	// Check before parsing: a rejected chunk is never written downstream.
-	if !s.preflightSSEChunkFork(chunk) {
+	// Only reuse validation for the exact slice passed to the synchronous callback.
+	// Other direct observations retain their own preflight before parsing.
+	alreadyChecked := len(preflighted) == len(chunk) && len(preflighted) > 0 && &preflighted[0] == &chunk[0]
+	if !alreadyChecked && !s.preflightSSEChunkFork(chunk) {
 		s.rejectSSEChunkFork()
 		return
 	}
@@ -206,6 +219,7 @@ func (s *claudeSSEStreamStateFork) ObserveChunk(chunk []byte) {
 }
 
 func (s *claudeSSEStreamStateFork) FlushPendingLine() {
+	s.preflightChunkFork = nil
 	if s.bufferError != nil {
 		return
 	}
