@@ -298,6 +298,13 @@ go build -o test-output ./cmd/server && rm test-output
 
 ## Upstream Contribution Candidates
 
+The upstream bbolt envelope encoder copies into a fresh allocation before
+returning it. `kvstore_nocopy_review_fork_test.go` records that exact one-write
+ownership review for the existing no-copy guard without changing its scanner or
+count assertions. `envelope_ownership_fork_test.go` verifies source preservation
+and non-aliasing in both directions, including caller capacity that could be
+reused. Retire the fork review entry when upstream records the same write.
+
 Upstream now captures the streaming log queue and writer at worker launch and
 owns panic-safe, idempotent request-log finalization. The duplicate fork production
 seam in `internal/api/middleware/response_writer.go` is retired. Keep

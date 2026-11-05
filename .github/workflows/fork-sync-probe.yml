@@ -22,7 +22,7 @@ jobs:
       - name: Verify fork formatting and merge pinned upstream
         run: |
           set -euo pipefail
-          gofmt -d sdk/api/handlers/claude/code_handlers.go sdk/api/handlers/claude/stream_buffer_bounds_fork.go sdk/api/handlers/claude/stream_buffer_bounds_fork_test.go > "$RUNNER_TEMP/sync-gofmt.diff"
+          gofmt -d sdk/api/handlers/claude/code_handlers.go sdk/api/handlers/claude/stream_buffer_bounds_fork.go sdk/api/handlers/claude/stream_buffer_bounds_fork_test.go internal/util/kvstore_nocopy_review_fork_test.go internal/kvstore/envelope_ownership_fork_test.go > "$RUNNER_TEMP/sync-gofmt.diff"
           cat "$RUNNER_TEMP/sync-gofmt.diff"
           test ! -s "$RUNNER_TEMP/sync-gofmt.diff"
           git rev-parse HEAD HEAD^{tree}
@@ -30,7 +30,7 @@ jobs:
           git fetch --no-tags https://github.com/router-for-me/CLIProxyAPI.git 585f97deac9aa57c700301221fb1a7085e1827cc
           git -c user.name='Sync validation' -c user.email='sync-validation@users.noreply.github.com' merge --no-commit --no-ff 585f97deac9aa57c700301221fb1a7085e1827cc
           git write-tree
-          gofmt -d sdk/api/handlers/claude/code_handlers.go sdk/api/handlers/claude/stream_buffer_bounds_fork.go sdk/api/handlers/claude/stream_buffer_bounds_fork_test.go > "$RUNNER_TEMP/merged-gofmt.diff"
+          gofmt -d sdk/api/handlers/claude/code_handlers.go sdk/api/handlers/claude/stream_buffer_bounds_fork.go sdk/api/handlers/claude/stream_buffer_bounds_fork_test.go internal/util/kvstore_nocopy_review_fork_test.go internal/kvstore/envelope_ownership_fork_test.go > "$RUNNER_TEMP/merged-gofmt.diff"
           cat "$RUNNER_TEMP/merged-gofmt.diff"
           test ! -s "$RUNNER_TEMP/merged-gofmt.diff"
       - name: Verify merged refusal logging and bounds
@@ -98,6 +98,7 @@ jobs:
           gofmt -w sdk/api/handlers/claude/sync_refusal_probe_test.go
           go test -race ./sdk/api/handlers/claude -run 'TestClaudeMergedRefusalLoggingProbe|TestClaudeSSE.*Fork|TestClaudeStream.*Overflow.*Fork' -count=20 -timeout=5m
           rm sdk/api/handlers/claude/sync_refusal_probe_test.go
+          go test -race ./internal/util ./internal/kvstore -run 'TestInPlaceByteWritesAreReviewed|TestEncodeEnvelopeOwnsBufferFork' -count=20 -timeout=5m
           go test -race ./internal/runtime/executor ./internal/runtime/executor/helps -run 'Claude.*(SSE|Refusal|StopReason|Stream)' -count=1 -timeout=5m
       - name: Verify merged full repository and builds
         run: |
