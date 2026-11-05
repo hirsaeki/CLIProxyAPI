@@ -339,6 +339,10 @@ func (h *ClaudeCodeAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON [
 
 			// Write the first chunk
 			streamState.ObserveChunk(chunk)
+			if streamState.policyRefusalErr != nil && !streamState.loggedTerminalError {
+				h.LoggingAPIResponseError(c, streamState.policyRefusalErr)
+				streamState.loggedTerminalError = true
+			}
 			if len(chunk) > 0 {
 				_, _ = c.Writer.Write(chunk)
 				flusher.Flush()
@@ -354,13 +358,15 @@ func (h *ClaudeCodeAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON [
 }
 
 type claudeSSEStreamState struct {
-	sawErrorEvent      bool
-	sawMessageStop     bool
-	sawBareMessageJSON bool
-	trailingNewlines   int
-	currentEvent       string
-	eventData          [][]byte
-	lineBuf            bytes.Buffer
+	sawErrorEvent       bool
+	sawMessageStop      bool
+	sawBareMessageJSON  bool
+	loggedTerminalError bool
+	policyRefusalErr    *interfaces.ErrorMessage
+	trailingNewlines    int
+	currentEvent        string
+	eventData           [][]byte
+	lineBuf             bytes.Buffer
 }
 
 func (s *claudeSSEStreamState) ObserveChunk(chunk []byte) {
@@ -434,6 +440,14 @@ func (s *claudeSSEStreamState) observeLine(line []byte) {
 }
 
 func (s *claudeSSEStreamState) observeJSONPayload(payload []byte, hasDataPrefix bool) {
+	if s.policyRefusalErr == nil {
+		if refusalMsg, blocked := clienterror.ClaudePolicyRefusalMessage(payload); blocked {
+			s.policyRefusalErr = &interfaces.ErrorMessage{
+				StatusCode: http.StatusBadRequest,
+				Error:      errors.New(refusalMsg),
+			}
+		}
+	}
 	root := util.ParseGJSONBytesNoCopy(payload)
 	switch root.Get("type").String() {
 	case "message_stop":
@@ -489,6 +503,10 @@ func (h *ClaudeCodeAPIHandler) forwardClaudeStreamWithState(c *gin.Context, flus
 				return
 			}
 			state.ObserveChunk(chunk)
+			if state.policyRefusalErr != nil && !state.loggedTerminalError {
+				h.LoggingAPIResponseError(c, state.policyRefusalErr)
+				state.loggedTerminalError = true
+			}
 			_, _ = c.Writer.Write(chunk)
 		},
 		WriteTerminalError: func(errMsg *interfaces.ErrorMessage) {
@@ -496,7 +514,11 @@ func (h *ClaudeCodeAPIHandler) forwardClaudeStreamWithState(c *gin.Context, flus
 			if errMsg == nil {
 				return
 			}
-			if state.sawErrorEvent {
+			if !state.loggedTerminalError {
+				h.LoggingAPIResponseError(c, errMsg)
+				state.loggedTerminalError = true
+			}
+			if state.sawErrorEvent || (state.sawMessageStop && clienterror.IsClaudePolicyRefusalError(errMsg.Error)) {
 				state.ensureSSEEventBoundary(c.Writer)
 				return
 			}
