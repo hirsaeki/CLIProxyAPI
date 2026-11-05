@@ -326,15 +326,19 @@ func (h *ClaudeCodeAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON [
 				return
 			}
 
-			stopKeepAlive()
-			var streamState claudeSSEStreamState
-			streamState.trailingNewlines = 2
-			if !h.acceptClaudeStreamChunkFork(c, flusher, func(err error) { cliCancel(err) }, &streamState, chunk, committed) {
+			if !h.acceptClaudeStreamChunkFork(c, flusher, func(err error) { cliCancel(err) }, nil, chunk, committed) {
+				stopKeepAlive()
 				return
 			}
+
+			// Success! Set headers now.
+			stopKeepAlive()
 			commitSSE()
 
-			// Write the first chunk.
+			// Write the first chunk
+			var streamState claudeSSEStreamStateFork
+			streamState.trailingNewlines = 2
+			streamState.ObserveChunk(chunk)
 			if len(chunk) > 0 {
 				_, _ = c.Writer.Write(chunk)
 				flusher.Flush()
@@ -350,7 +354,6 @@ func (h *ClaudeCodeAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON [
 }
 
 type claudeSSEStreamState struct {
-	claudeSSEBufferBoundsFork
 	sawErrorEvent      bool
 	sawMessageStop     bool
 	sawBareMessageJSON bool
@@ -361,39 +364,29 @@ type claudeSSEStreamState struct {
 }
 
 func (s *claudeSSEStreamState) ObserveChunk(chunk []byte) {
-	if len(chunk) == 0 || s.bufferError != nil {
+	if len(chunk) == 0 {
 		return
 	}
-	// Check before parsing: a rejected chunk is never written downstream.
-	if !s.preflightSSEChunkFork(chunk) {
-		s.rejectSSEChunkFork()
-		return
-	}
+	s.trailingNewlines = advanceClaudeSSENewlineCount(s.trailingNewlines, chunk)
 	for _, b := range chunk {
-		s.eventBytes++
 		if b == '\n' {
 			s.observeLine(s.lineBuf.Bytes())
-			s.resetLineBufferFork()
+			s.lineBuf.Reset()
 			continue
 		}
 		s.lineBuf.WriteByte(b)
 	}
-	s.trailingNewlines = advanceClaudeSSENewlineCount(s.trailingNewlines, chunk)
 }
 
 func (s *claudeSSEStreamState) FlushPendingLine() {
-	if s.bufferError != nil {
-		return
-	}
 	if s.lineBuf.Len() > 0 {
 		s.observeLine(s.lineBuf.Bytes())
-		s.resetLineBufferFork()
+		s.lineBuf.Reset()
 	}
 	s.flushEventData()
 }
 
 func (s *claudeSSEStreamState) flushEventData() {
-	s.flushBoundedEventDataFork()
 	if len(s.eventData) > 0 {
 		joined := bytes.TrimSpace(bytes.Join(s.eventData, []byte("\n")))
 		s.eventData = s.eventData[:0]
@@ -421,7 +414,6 @@ func (s *claudeSSEStreamState) observeLine(line []byte) {
 	if len(trimmed) == 0 {
 		s.flushEventData()
 		s.currentEvent = ""
-		s.eventBytes = 0
 		return
 	}
 	if bytes.HasPrefix(trimmed, []byte("event:")) {
@@ -431,10 +423,7 @@ func (s *claudeSSEStreamState) observeLine(line []byte) {
 	if bytes.HasPrefix(trimmed, []byte("data:")) {
 		payload := bytes.TrimSpace(trimmed[len("data:"):])
 		if len(payload) > 0 {
-			if s.boundedEventData.Len() > 0 {
-				s.boundedEventData.WriteByte('\n')
-			}
-			s.boundedEventData.Write(payload)
+			s.eventData = append(s.eventData, append([]byte(nil), payload...))
 		}
 		return
 	}
@@ -481,37 +470,42 @@ func advanceClaudeSSENewlineCount(prev int, chunk []byte) int {
 }
 
 func (h *ClaudeCodeAPIHandler) forwardClaudeStream(c *gin.Context, flusher http.Flusher, cancel func(error), data <-chan []byte, errs <-chan *interfaces.ErrorMessage, initialErrorWritten ...bool) {
-	state := &claudeSSEStreamState{
-		sawErrorEvent:    len(initialErrorWritten) > 0 && initialErrorWritten[0],
-		trailingNewlines: 2,
+	state := &claudeSSEStreamStateFork{
+		claudeSSEStreamState: claudeSSEStreamState{
+			sawErrorEvent:    len(initialErrorWritten) > 0 && initialErrorWritten[0],
+			trailingNewlines: 2,
+		},
 	}
 	h.forwardClaudeStreamWithState(c, flusher, cancel, data, errs, state)
 }
 
-func (h *ClaudeCodeAPIHandler) forwardClaudeStreamWithState(c *gin.Context, flusher http.Flusher, cancel func(error), data <-chan []byte, errs <-chan *interfaces.ErrorMessage, state *claudeSSEStreamState) {
+func (h *ClaudeCodeAPIHandler) forwardClaudeStreamWithState(c *gin.Context, flusher http.Flusher, cancel func(error), data <-chan []byte, errs <-chan *interfaces.ErrorMessage, state *claudeSSEStreamStateFork) {
 	if state == nil {
-		state = &claudeSSEStreamState{trailingNewlines: 2}
+		state = &claudeSSEStreamStateFork{claudeSSEStreamState: claudeSSEStreamState{trailingNewlines: 2}}
 	}
-	h.ForwardStream(c, flusher, cancel, data, errs, handlers.StreamForwardOptions{
+	h.ForwardStream(c, flusher, cancel, data, errs, boundClaudeStreamOptionsFork(state, handlers.StreamForwardOptions{
 		WriteChunk: func(chunk []byte) {
 			if len(chunk) == 0 {
 				return
 			}
 			state.ObserveChunk(chunk)
-			if state.bufferError != nil {
-				h.writeClaudeStreamTerminalErrorFork(c.Writer, state, state.bufferError)
-				return
-			}
 			_, _ = c.Writer.Write(chunk)
 		},
-		ChunkError: func() *interfaces.ErrorMessage { return state.bufferError },
 		WriteTerminalError: func(errMsg *interfaces.ErrorMessage) {
-			h.writeClaudeStreamTerminalErrorFork(c.Writer, state, errMsg)
+			state.FlushPendingLine()
+			if errMsg == nil {
+				return
+			}
+			if state.sawErrorEvent {
+				state.ensureSSEEventBoundary(c.Writer)
+				return
+			}
+			state.ensureSSEEventBoundary(c.Writer)
+
+			errorBytes, _ := json.Marshal(h.toClaudeError(errMsg))
+			_, _ = fmt.Fprintf(c.Writer, "event: error\ndata: %s\n\n", errorBytes)
 		},
 		CloseError: func() *interfaces.ErrorMessage {
-			if state.bufferError != nil {
-				return state.bufferError
-			}
 			state.FlushPendingLine()
 			if state.sawMessageStop || state.sawErrorEvent {
 				return nil
@@ -527,7 +521,7 @@ func (h *ClaudeCodeAPIHandler) forwardClaudeStreamWithState(c *gin.Context, flus
 				state.ensureSSEEventBoundary(c.Writer)
 			}
 		},
-	})
+	}))
 }
 
 type claudeErrorDetail struct {

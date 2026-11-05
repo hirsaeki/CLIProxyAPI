@@ -81,7 +81,7 @@ them must stay local to the listed responsibility.
 | `sdk/cliproxy/service_config.go` | Warn when a startup-only availability path changes |
 | `sdk/cliproxy/service_models.go` | Pass native candidates through the fork model-registration seam and preserve static-plugin exclusions in compatible-provider branches |
 | `internal/runtime/executor/claude_executor_stream.go` | Bound complete native and translated Claude SSE events through the fork-owned helper before appending, preserving failed usage on overflow and observing upstream stream usage before resetting each event |
-| `sdk/api/handlers/claude/code_handlers.go` | Bound partial lines and multi-line SSE events through the fork-owned observer state and existing `ChunkError` hook, including the first chunk before headers |
+| `sdk/api/handlers/claude/code_handlers.go` | Construct the fork-owned bounded observer and wrap upstream stream callbacks, including first-chunk preflight before headers |
 | `internal/discovery/zeroconf.go` | Keep the host-conflict probe receive buffer large enough for complete mDNS datagrams until the upstream buffer fix lands |
 | `sdk/cliproxy/service_executors.go` | Pass candidates to per-auth plugin model resolution |
 | `internal/util/gemini_schema.go` | Preserve explicit all-false unions and scope union traversal to schema positions until the generic upstream fix lands |
@@ -417,12 +417,21 @@ or transport. Neither path reruns payload rules. Schema helpers use the existing
 JSON compatibility utilities and preserve ordered, duplicate-key traversal rather
 than depending on concrete parser result types.
 
-Claude's bounded event storage lives in the fork-owned `boundedEventData` field.
-The upstream `eventData` slice and parser block remain structurally intact for
-upstream changes, but no live path writes that slice. The fork regression checks
-that it stays empty through multi-line events, boundaries, flushes, and rejection.
-If upstream introduces another writer, reconcile ownership before syncing; do not
-allow an unbounded parallel buffer or duplicate event observation.
+Claude's bounded event storage and line parsing live in the fork-owned
+`claudeSSEStreamStateFork` wrapper in `stream_buffer_bounds_fork.go`. It embeds
+upstream's unchanged state and delegates JSON classification to that state, so
+new refusal/error fields remain authoritative. The live handler uses the bounded
+wrapper; its upstream `eventData` slice stays empty. Keep the upstream observer
+methods intact rather than reintroducing bounds into their state layout.
+
+First-chunk preflight must not observe accepted bytes or commit headers. The
+upstream first-chunk path then observes accepted bytes once through the bounded
+wrapper. Later chunks use the options wrapper, which invokes upstream's original
+terminal-error callback on overflow before `ChunkError` cancels. This preserves
+upstream logging and duplicate-error suppression while withholding rejected
+bytes. Keep callback-delegation, observer-parity, multiline, boundary, flush, and
+rejection regressions; never add an unbounded parallel buffer or observe a
+payload twice.
 
 JSON-shaped conversation data and native response
 `additionalProperties: false` remain unaffected. This is an upstream contribution

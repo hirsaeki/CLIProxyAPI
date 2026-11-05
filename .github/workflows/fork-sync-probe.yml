@@ -1,0 +1,108 @@
+name: Temporary pinned upstream validation
+on:
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: fork-sync-probe-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  merged-upstream:
+    if: github.head_ref == 'codex/upstream-sync-20261105'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Verify fork formatting and merge pinned upstream
+        run: |
+          set -euo pipefail
+          gofmt -d sdk/api/handlers/claude/code_handlers.go sdk/api/handlers/claude/stream_buffer_bounds_fork.go sdk/api/handlers/claude/stream_buffer_bounds_fork_test.go > "$RUNNER_TEMP/sync-gofmt.diff"
+          cat "$RUNNER_TEMP/sync-gofmt.diff"
+          test ! -s "$RUNNER_TEMP/sync-gofmt.diff"
+          git rev-parse HEAD HEAD^{tree}
+          git ls-tree -r HEAD | grep -v '.github/workflows/fork-sync-probe.yml' | sha256sum
+          git fetch --no-tags https://github.com/router-for-me/CLIProxyAPI.git 585f97deac9aa57c700301221fb1a7085e1827cc
+          git -c user.name='Sync validation' -c user.email='sync-validation@users.noreply.github.com' merge --no-commit --no-ff 585f97deac9aa57c700301221fb1a7085e1827cc
+          git write-tree
+          gofmt -d sdk/api/handlers/claude/code_handlers.go sdk/api/handlers/claude/stream_buffer_bounds_fork.go sdk/api/handlers/claude/stream_buffer_bounds_fork_test.go > "$RUNNER_TEMP/merged-gofmt.diff"
+          cat "$RUNNER_TEMP/merged-gofmt.diff"
+          test ! -s "$RUNNER_TEMP/merged-gofmt.diff"
+      - name: Verify merged refusal logging and bounds
+        run: |
+          set -euo pipefail
+          cat > sdk/api/handlers/claude/sync_refusal_probe_test.go <<'GO'
+          package claude
+
+          import (
+              "context"
+              "net/http"
+              "net/http/httptest"
+              "strings"
+              "testing"
+
+              "github.com/gin-gonic/gin"
+              "github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
+              "github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
+              "github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
+              coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+              coreexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
+              sdkconfig "github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
+          )
+
+          func TestClaudeMergedRefusalLoggingProbe(t *testing.T) {
+              gin.SetMode(gin.TestMode)
+              refusal := "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"refusal\",\"stop_details\":{\"type\":\"refusal\",\"category\":\"cyber\"}}}\n\n"
+              stop := "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+              prefix := "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"partial\"}}\n\n"
+              for _, tc := range []struct{name string; chunks []string}{
+                  {"first", []string{refusal, stop}},
+                  {"later", []string{prefix, refusal, stop}},
+                  {"split", []string{prefix, refusal[:len(refusal)/2], refusal[len(refusal)/2:], stop}},
+              } {
+                  t.Run(tc.name, func(t *testing.T) {
+                      chunks := make(chan coreexecutor.StreamChunk, len(tc.chunks))
+                      for _, chunk := range tc.chunks { chunks <- coreexecutor.StreamChunk{Payload: []byte(chunk)} }
+                      close(chunks)
+                      executor := &preFTKeepAliveClaudeExecutor{chunks: chunks}
+                      manager := coreauth.NewManager(nil, nil, nil)
+                      manager.RegisterExecutor(executor)
+                      model := "sync-refusal-" + tc.name
+                      auth := &coreauth.Auth{ID: model, Provider: executor.Identifier(), Status: coreauth.StatusActive}
+                      if _, err := manager.Register(context.Background(), auth); err != nil { t.Fatal(err) }
+                      registry.GetGlobalRegistry().RegisterClient(auth.ID, auth.Provider, []*registry.ModelInfo{{ID: model}})
+                      t.Cleanup(func(){registry.GetGlobalRegistry().UnregisterClient(auth.ID)})
+                      handler := NewClaudeCodeAPIHandler(handlers.NewBaseAPIHandlers(&sdkconfig.SDKConfig{}, manager))
+                      var logged []*interfaces.ErrorMessage
+                      router := gin.New()
+                      router.POST("/v1/messages", func(c *gin.Context){
+                          handler.ClaudeMessages(c)
+                          value, _ := c.Get("API_RESPONSE_ERROR")
+                          logged, _ = value.([]*interfaces.ErrorMessage)
+                      })
+                      request := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader("{\"model\":\""+model+"\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"stream\":true}"))
+                      request.Header.Set("Content-Type", "application/json")
+                      recorder := httptest.NewRecorder()
+                      router.ServeHTTP(recorder, request)
+                      if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "event: message_stop") || strings.Contains(recorder.Body.String(), "event: error") {t.Fatalf("response %d: %s", recorder.Code, recorder.Body.String())}
+                      if len(logged) != 1 || logged[0].StatusCode != http.StatusBadRequest {t.Fatalf("refusal logs: %+v", logged)}
+                  })
+              }
+          }
+          GO
+          gofmt -w sdk/api/handlers/claude/sync_refusal_probe_test.go
+          go test -race ./sdk/api/handlers/claude -run 'TestClaudeMergedRefusalLoggingProbe|TestClaudeSSE.*Fork|TestClaudeStream.*Overflow.*Fork' -count=20 -timeout=5m
+          rm sdk/api/handlers/claude/sync_refusal_probe_test.go
+          go test -race ./internal/runtime/executor ./internal/runtime/executor/helps -run 'Claude.*(SSE|Refusal|StopReason|Stream)' -count=1 -timeout=5m
+      - name: Verify merged full repository and builds
+        run: |
+          set -euo pipefail
+          go test ./... -timeout=5m
+          go build -o "$RUNNER_TEMP/server" ./cmd/server
+          go build -o "$RUNNER_TEMP/oauth-helper" ./cmd/sync_oauth_model_availability
+          git write-tree
