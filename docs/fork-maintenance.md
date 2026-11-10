@@ -358,12 +358,12 @@ Use the upstream implementation without a fork test delta; it supersedes the
 fork correction for go-git's cached handles keeping unlinked packs readable.
 Preserve every fail-closed recovery and file-preservation assertion.
 
-The three WebSocket keepalive-during-upload fixtures must observe Pong while the
-client payload hook is blocked, then wait for the complete request before sending
-a terminal response and closing the server socket. Releasing the hook only permits
-the write to begin; responding immediately creates a scheduler-dependent closed
-socket failure unrelated to keepalive behavior. Keep all Pong ordering assertions
-and the request-read barrier; retire this test-only delta when upstream adopts it.
+Upstream now owns the request-read barriers in all three WebSocket
+keepalive-during-upload fixtures. Use its `payloadReceived` synchronization and
+idempotent hook signals without a fork test delta. Preserve the Pong-during-write
+assertions, wait for the complete request before the terminal response, and keep
+the server connection alive until the test completes. CI repeats these tests with
+the race detector to protect the ordering under scheduler contention.
 
 The WebSocket retry-bind test assigns server connection ordinals before sending
 the upgrade handshake. This prevents a fast retry from being mistaken for the
@@ -448,11 +448,25 @@ candidate; no general schema satisfiability solver is introduced. The existing
 approximate `allOf`/conditional reductions are outside this narrow union-rewrite
 fix and may still simplify constraints before union cleaning.
 
-The inherited HTTP-interrupt test now waits for its fixture's cancellation
-observer through a channel before retaining its original atomic assertion. The
-incomplete WebSocket frame can arrive before that observer runs; missing
-cancellation still fails under a bounded timeout. CI repeats this unchanged
-production behavior twenty times with the race detector.
+Upstream now owns the HTTP-interrupt fixture's cancellation channel and
+idempotent signal, so the duplicate fork test delta is retired. Keep its atomic
+cancellation assertion and cancel-before-incomplete-frame regression alongside
+the separate fork terminal-event lifecycle tests. CI repeats these tests twenty
+times with the race detector.
+
+The server WebSocket reauthorization fixture joins its hijacked request handler
+before temporary-directory cleanup, preserving all authentication assertions
+while allowing request logging to finish. The targeted OAuth registration
+fixture uses pending in-memory Kimi, xAI, and Meta services and joins their
+cancellation before restoring factories; it must not restore a global HTTP mock
+while device polling is still active. These are fork-owned test helpers, not
+production authentication or transport changes. Retire them when upstream owns
+equivalent deterministic cleanup.
+
+The fork SSE-overflow fixture captures usage only for its own unique auth ID.
+The shared asynchronous usage dispatcher may deliver queued records from other
+tests after plugin registration; those records must not displace the overflow
+record or satisfy its failure-status and buffered-token assertions.
 
 ### Persisted auth and queued file snapshots
 
@@ -578,3 +592,19 @@ terminal markers, while dropping metadata-only frames and preserving bare input.
 This companion seam is required because detecting event boundaries alone leaves
 metadata in the translated payload. Retire these upstream contribution candidates
 when upstream provides equivalent framing and payload normalization.
+
+### Codex refresh receipt review regressions
+
+Keep refresh-grant coalescing global across authoritative journals: splitting the
+singleflight key by journal could consume the same one-use grant twice. The
+fork-owned `refresh_journal_shared_fork.go` records a successful shared result in
+each caller's journal before returning, without overwriting existing pending
+claims. Receipt completion uses a bounded acquisition context independent of the
+exchange deadline so a completed rotation is not discarded at timeout.
+
+The macOS power-state probe must preserve both its underlying error and
+`ErrSIWCRefreshDeferred`; otherwise retry wrappers repeat an unavailable probe.
+The fork-owned Darwin regression and macOS Codex refresh CI job verify that no
+token request or retry is made while the power state is unknown. These are
+upstream contribution candidates; remove the narrow production seams once
+upstream supplies equivalent behavior, retaining the regressions.

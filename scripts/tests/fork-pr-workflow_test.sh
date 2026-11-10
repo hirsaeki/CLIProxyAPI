@@ -28,15 +28,15 @@ require_line 'BASE_SHA: ${{ github.event.pull_request.base.sha }}'
 require_line 'HEAD_SHA: ${{ github.event.pull_request.head.sha }}'
 require_line 'name: build Windows plugin (${{ matrix.goarch }})'
 require_line "runs-on: \${{ needs.changes.outputs.manifest_only == 'true' && matrix.goarch == 'arm64' && 'ubuntu-latest' || matrix.runner }}"
-require_count 2 '    needs: changes'
-require_count 2 '    if: ${{ !cancelled() }}'
-require_count 2 "if: needs.changes.result != 'success' || (needs.changes.outputs.manifest_only != 'true' && needs.changes.outputs.manifest_only != 'false')"
-require_count 2 '        uses: actions/setup-go@v5'
+require_count 3 '    needs: changes'
+require_count 3 '    if: ${{ !cancelled() }}'
+require_count 3 "if: needs.changes.result != 'success' || (needs.changes.outputs.manifest_only != 'true' && needs.changes.outputs.manifest_only != 'false')"
+require_count 3 '        uses: actions/setup-go@v5'
 awk -v condition="        if: needs.changes.outputs.manifest_only != 'true'" '
   /uses: actions\/setup-go@v5/ && previous != condition { exit 1 }
   { previous=$0 }
 ' "$workflow" || { echo 'Go setup must be skipped for manifest-only changes' >&2; exit 1; }
-for step in 'Build' 'Refresh models catalog' 'Install LLVM-MinGW' 'Build Vertex region models plugin' 'Test fork model registration and config snapshot races' 'Test Go packages'; do
+for step in 'Build' 'Refresh models catalog' 'Install LLVM-MinGW' 'Build Vertex region models plugin' 'Test fork model registration and config snapshot races' 'Test Go packages' 'Test macOS Codex refresh regressions'; do
   require_step_condition "$step" "needs.changes.outputs.manifest_only != 'true'"
 done
 require_step_condition 'Validate WinGet manifest' "needs.changes.outputs.manifest_only == 'true' && matrix.goarch == 'amd64'"
