@@ -592,3 +592,19 @@ terminal markers, while dropping metadata-only frames and preserving bare input.
 This companion seam is required because detecting event boundaries alone leaves
 metadata in the translated payload. Retire these upstream contribution candidates
 when upstream provides equivalent framing and payload normalization.
+
+### Codex refresh receipt review regressions
+
+Keep refresh-grant coalescing global across authoritative journals: splitting the
+singleflight key by journal could consume the same one-use grant twice. The
+fork-owned `refresh_journal_shared_fork.go` records a successful shared result in
+each caller's journal before returning, without overwriting existing pending
+claims. Receipt completion uses a bounded acquisition context independent of the
+exchange deadline so a completed rotation is not discarded at timeout.
+
+The macOS power-state probe must preserve both its underlying error and
+`ErrSIWCRefreshDeferred`; otherwise retry wrappers repeat an unavailable probe.
+The fork-owned Darwin regression and macOS Codex refresh CI job verify that no
+token request or retry is made while the power state is unknown. These are
+upstream contribution candidates; remove the narrow production seams once
+upstream supplies equivalent behavior, retaining the regressions.

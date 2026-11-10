@@ -137,7 +137,9 @@ func journalRefresh[T any](ctx context.Context, journal RefreshJournal, clientID
 	}
 	// Use an independent acquisition context for the receipt, just as for the
 	// exchange itself. Caller cancellation must not discard a successful rotation.
-	if errComplete := journal.RefreshComplete(ctx, key, doc.Bytes()); errComplete != nil {
+	receiptCtx, cancelReceipt := context.WithTimeout(context.WithoutCancel(ctx), codexRefreshTimeout)
+	defer cancelReceipt()
+	if errComplete := journal.RefreshComplete(receiptCtx, key, doc.Bytes()); errComplete != nil {
 		return zero, errors.Join(errRun, &RefreshOutcomeUnknownError{Stage: "receipt-write", Cause: errComplete})
 	}
 	return value, errRun

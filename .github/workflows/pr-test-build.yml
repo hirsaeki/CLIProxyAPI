@@ -280,3 +280,24 @@ jobs:
             go test ./internal/pluginhost \
               -run '^(TestDynamicLibraryClientSerializesCalls|TestDynamicLibraryClientCall.*|TestWindowsClosedClientKeepsResidentHostState|TestVertexRegionModelsPluginCABI|TestShadow.*|TestRemoveStaleShadow.*)$' \
               -count=1
+
+  codex-refresh-macos:
+    needs: changes
+    if: ${{ !cancelled() }}
+    runs-on: ${{ needs.changes.outputs.manifest_only == 'true' && 'ubuntu-latest' || 'macos-latest' }}
+    timeout-minutes: 15
+    steps:
+      - name: Require successful change classification
+        if: needs.changes.result != 'success' || (needs.changes.outputs.manifest_only != 'true' && needs.changes.outputs.manifest_only != 'false')
+        run: exit 1
+      - name: Checkout
+        if: needs.changes.outputs.manifest_only != 'true'
+        uses: actions/checkout@v4
+      - name: Set up Go
+        if: needs.changes.outputs.manifest_only != 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Test macOS Codex refresh regressions
+        if: needs.changes.outputs.manifest_only != 'true'
+        run: go test -race ./internal/auth/codex -count=3 -timeout=5m

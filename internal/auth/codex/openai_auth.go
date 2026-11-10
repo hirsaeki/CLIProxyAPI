@@ -223,7 +223,7 @@ func (o *CodexAuth) RefreshTokens(ctx context.Context, refreshToken string) (*Co
 	if !ok || tokenData == nil {
 		return nil, fmt.Errorf("token refresh failed: invalid single-flight result")
 	}
-	return tokenData, nil
+	return journalSharedRefreshReceipt(ctx, o.journal(ctx), ClientID, refreshToken, tokenData, decodeRefreshReceipt)
 }
 
 func (o *CodexAuth) refreshTokensSingleFlight(ctx context.Context, refreshToken string) (*CodexTokenData, error) {

@@ -346,7 +346,8 @@ func (o *CodexAuth) RefreshSIWCTokens(ctx context.Context, refreshToken, clientI
 	if !ok || tokenData == nil {
 		return nil, WrapSIWCRefreshError(fmt.Errorf("SIWC token refresh failed: invalid single-flight result"))
 	}
-	return tokenData, nil
+	tokenData, errReceipt := journalSharedRefreshReceipt(ctx, o.journal(ctx), clientID, refreshToken, tokenData, decodeSIWCRefreshReceipt)
+	return tokenData, WrapSIWCRefreshError(errReceipt)
 }
 
 // RefreshSIWCTokensWithRetry refreshes SIWC tokens with exponential backoff.
