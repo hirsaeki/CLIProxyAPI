@@ -241,22 +241,6 @@ func (s *targetedTestMetaOAuthService) CreateTokenStorage(bundle *metaauth.MetaA
 func TestStartOAuthV8TargetedSessionRegistrationAcrossBuiltinProviders(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	origTransport := http.DefaultTransport
-	http.DefaultTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		rec := httptest.NewRecorder()
-		rec.Header().Set("Content-Type", "application/json")
-		switch {
-		case strings.Contains(req.URL.Path, "openid-configuration"):
-			_, _ = rec.WriteString(`{"device_authorization_endpoint":"https://auth.x.ai/device","token_endpoint":"https://auth.x.ai/token"}`)
-		case strings.Contains(req.URL.Path, "device"):
-			_, _ = rec.WriteString(`{"device_code":"dev-code","user_code":"ABCD-1234","verification_uri":"https://example.test/verify","verification_uri_complete":"https://example.test/verify?code=ABCD-1234","expires_in":600,"interval":5}`)
-		default:
-			_, _ = rec.WriteString(`{"error":"authorization_pending"}`)
-		}
-		return rec.Result(), nil
-	})
-	t.Cleanup(func() { http.DefaultTransport = origTransport })
-
 	origCodexFactory := newCodexOAuthService
 	newCodexOAuthService = func(*config.Config) codexOAuthService {
 		return &targetedRecoveryTestCodexOAuthService{authDir: t.TempDir(), email: "a@x.test", accountID: "acc-1"}
@@ -314,6 +298,8 @@ func TestStartOAuthV8TargetedSessionRegistrationAcrossBuiltinProviders(t *testin
 
 	for _, tc := range targets {
 		t.Run(tc.provider, func(t *testing.T) {
+			installPendingDeviceOAuthFixtureFork(t, tc.provider)
+
 			reqBody, _ := json.Marshal(map[string]any{
 				"provider": tc.provider,
 				"name":     tc.fileName,

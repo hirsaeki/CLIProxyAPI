@@ -117,7 +117,7 @@ jobs:
           go test -race ./internal/runtime/executor/helps ./sdk/api/handlers/claude \
             -run 'TestClaudeSSE.*Fork|TestClaudeStream.*Overflow.*Fork' -count=20 -timeout=5m
           go test -race ./internal/runtime/executor \
-            -run '^TestClaudeExecutorSSEEventLimitFork$' -count=1 -timeout=5m
+            -run '^Test(ClaudeExecutorSSEEventLimitFork|ClaudeSSEUsageCaptureFiltersAuthFork)$' -count=1 -timeout=5m
           go test -race ./internal/testutil/forkcatalog -count=20 -timeout=5m
           go test -race ./internal/discovery ./sdk/cliproxy \
             -run '^(TestHostProbeReceivesLargeConflictDatagramFork|TestCompatStaticPluginExclusionsFork)$' -count=20 -timeout=5m
@@ -141,9 +141,15 @@ jobs:
           go test -race ./internal/runtime/executor \
             -run '^(TestAIStudioTranslateRequestNormalizesThinkingLevel|TestAntigravityExecutorExecuteStreamTranslatesInteractionsRequest|TestWebsocketRetryBindFailureClearsActiveSessionState)$' \
             -count=20 -timeout=5m
+          go test -race ./internal/runtime/executor \
+            -run '^TestCodexWebsockets_KeepalivePingDuringUpload_' -count=20 -timeout=5m
           go test -race ./sdk/api/handlers/openai \
-            -run '^(TestResponsesTerminalFrameEndsLocalInterruptBeforeStreamCloseFork|TestResponsesLateInterruptDoesNotPoisonNextCreate|TestResponsesInterruptDiagnosticsAreSanitized|TestResponsesInterruptStopsHTTPUpstream)$' \
+            -run '^(TestResponsesTerminalFrameEndsLocalInterruptBeforeStreamCloseFork|TestResponsesLateInterruptDoesNotPoisonNextCreate|TestResponsesInterruptDiagnosticsAreSanitized|TestResponsesInterruptStopsHTTPUpstream|TestCompleteResponsesWebsocketLocalInterruptCancelsBeforeWritingIncomplete)$' \
             -count=20 -timeout=5m
+          go test -race ./internal/api \
+            -run '^TestServerResponsesWebsocketReauthorizesEachTurn$' -count=20 -timeout=5m
+          go test -race ./internal/api/handlers/management \
+            -run '^TestStartOAuthV8TargetedSessionRegistrationAcrossBuiltinProviders$' -count=3 -timeout=5m
       - name: Test unsatisfiable schema regressions
         if: needs.changes.outputs.manifest_only != 'true'
         run: |

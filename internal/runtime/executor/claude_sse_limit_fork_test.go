@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
@@ -17,6 +18,39 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
 )
+
+// Scope capture before enqueueing: the global usage dispatcher can deliver older
+// tests' records after this plugin is registered, including across -count runs.
+type captureClaudeSSELimitUsagePluginFork struct {
+	*captureClaudeUsagePlugin
+	authID string
+}
+
+func (p *captureClaudeSSELimitUsagePluginFork) HandleUsage(ctx context.Context, record usage.Record) {
+	if record.AuthID != p.authID {
+		return
+	}
+	p.captureClaudeUsagePlugin.HandleUsage(ctx, record)
+}
+
+func TestClaudeSSEUsageCaptureFiltersAuthFork(t *testing.T) {
+	plugin := &captureClaudeSSELimitUsagePluginFork{
+		captureClaudeUsagePlugin: &captureClaudeUsagePlugin{records: make(chan usage.Record, 1)},
+		authID:                   "overflow-fixture",
+	}
+	for range 10 {
+		plugin.HandleUsage(context.Background(), usage.Record{Provider: "claude", AuthID: "other-fixture"})
+	}
+	plugin.HandleUsage(context.Background(), usage.Record{Provider: "claude", AuthID: plugin.authID, Failed: true})
+	select {
+	case record := <-plugin.records:
+		if record.AuthID != plugin.authID || !record.Failed {
+			t.Fatalf("captured unrelated usage instead of overflow fixture: %+v", record)
+		}
+	default:
+		t.Fatal("unrelated usage filled the buffer and dropped the fixture record")
+	}
+}
 
 func TestClaudeExecutorSSEEventLimitFork(t *testing.T) {
 	for _, format := range []sdktranslator.Format{sdktranslator.FormatClaude, sdktranslator.FormatOpenAI} {
@@ -38,13 +72,17 @@ func TestClaudeExecutorSSEEventLimitFork(t *testing.T) {
 			}))
 			defer server.Close()
 			pluginName := "test-claude-sse-limit-" + string(format)
-			plugin := &captureClaudeUsagePlugin{records: make(chan usage.Record, 4)}
+			authID := t.Name() + "-" + uuid.NewString()
+			plugin := &captureClaudeSSELimitUsagePluginFork{
+				captureClaudeUsagePlugin: &captureClaudeUsagePlugin{records: make(chan usage.Record, 4)},
+				authID:                   authID,
+			}
 			usage.RegisterNamedPlugin(pluginName, plugin)
 			defer usage.RegisterNamedPlugin(pluginName, noopClaudeUsagePlugin{})
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			exec := NewClaudeExecutor(&config.Config{})
-			auth := &cliproxyauth.Auth{Attributes: map[string]string{"api_key": "key-123", "base_url": server.URL}}
+			auth := &cliproxyauth.Auth{ID: authID, Attributes: map[string]string{"api_key": "key-123", "base_url": server.URL}}
 			result, err := exec.ExecuteStream(ctx, auth, cliproxyexecutor.Request{
 				Model:   "claude-opus-5",
 				Payload: []byte(`{"model":"claude-opus-5","messages":[{"role":"user","content":"hi"}],"stream":true}`),
