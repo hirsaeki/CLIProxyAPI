@@ -735,7 +735,8 @@ jobs:
           downloaded=false
           for url in "${urls[@]}"; do
             echo "Attempting to download FreeBSD base.txz from ${url}..."
-            if curl -fsSL --connect-timeout 15 --max-time 120 --retry 3 --retry-max-time 300 --retry-connrefused "$url" -o /tmp/base.txz; then
+            # The sysroot is over 150 MiB; allow slow transfers to finish within the job's time limit.
+            if curl -fsSL --connect-timeout 15 --max-time 600 --retry 3 --retry-max-time 300 --retry-connrefused "$url" -o /tmp/base.txz; then
               echo "Successfully downloaded FreeBSD base.txz from ${url}"
               downloaded=true
               break
