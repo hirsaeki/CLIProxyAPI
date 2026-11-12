@@ -599,12 +599,11 @@ Keep refresh-grant coalescing global across authoritative journals: splitting th
 singleflight key by journal could consume the same one-use grant twice. The
 fork-owned `refresh_journal_shared_fork.go` records a successful shared result in
 each caller's journal before returning, without overwriting existing pending
-claims. Receipt completion uses a bounded acquisition context independent of the
-exchange deadline so a completed rotation is not discarded at timeout.
+claims. This shared-journal seam remains a fork contribution candidate.
 
-The macOS power-state probe must preserve both its underlying error and
-`ErrSIWCRefreshDeferred`; otherwise retry wrappers repeat an unavailable probe.
-The fork-owned Darwin regression and macOS Codex refresh CI job verify that no
-token request or retry is made while the power state is unknown. These are
-upstream contribution candidates; remove the narrow production seams once
-upstream supplies equivalent behavior, retaining the regressions.
+Upstream now supplies the cancellation-independent receipt context and the
+macOS probe error wrapping that preserves `ErrSIWCRefreshDeferred`. Use the
+upstream implementations without the former fork patches. Keep the fork receipt
+and Darwin regressions: they verify that completed rotations survive caller
+cancellation and that an unavailable power-state probe causes no token request
+or retry. The macOS Codex refresh CI job also covers these guarantees.
