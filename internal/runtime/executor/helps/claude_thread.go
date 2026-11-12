@@ -223,25 +223,24 @@ func (r *claudeThreadStreamReader) Read(p []byte) (int, error) {
 		return 0, nil
 	}
 	for r.ready.Len() == 0 {
+		ResetClaudeSSEBuffer(&r.ready)
 		if r.finished {
 			return 0, io.EOF
 		}
 		var event bytes.Buffer
 		for r.scanner.Scan() {
 			line := r.scanner.Bytes()
-			event.Write(line)
-			event.WriteByte('\n')
-			if event.Len() > claudeThreadEventLimit {
-				return 0, errors.New("Claude Thread event exceeds buffer limit")
+			if !AppendClaudeSSELine(&event, line) {
+				return 0, ClaudeSSEEventLimitError{}
 			}
 			if len(bytes.TrimSpace(line)) == 0 {
 				break
 			}
 		}
+		if errScan := r.scanner.Err(); errScan != nil {
+			return 0, errScan
+		}
 		if event.Len() == 0 {
-			if errScan := r.scanner.Err(); errScan != nil {
-				return 0, errScan
-			}
 			// Never release a completion signal from a truncated Thread turn.
 			return 0, io.ErrUnexpectedEOF
 		}
@@ -250,7 +249,7 @@ func (r *claudeThreadStreamReader) Read(p []byte) (int, error) {
 			return 0, errors.New("malformed Claude Thread stream event")
 		}
 		if r.pending.Len()+event.Len() > claudeThreadEventLimit {
-			return 0, errors.New("Claude Thread completion exceeds buffer limit")
+			return 0, ClaudeSSEEventLimitError{}
 		}
 		root := ojson.ParseBytes(payload)
 		typ := root.Get("type").String()
@@ -266,7 +265,7 @@ func (r *claudeThreadStreamReader) Read(p []byte) (int, error) {
 		case "error":
 			r.failed = true
 			// Drop any speculative completion and let the executor report the error.
-			r.pending.Reset()
+			ResetClaudeSSEBuffer(&r.pending)
 		case "message_stop":
 			r.finished = true
 			if !r.failed && r.messageID != "" {
@@ -284,7 +283,7 @@ func (r *claudeThreadStreamReader) Read(p []byte) (int, error) {
 			r.pending.Write(event.Bytes())
 			if r.finished {
 				r.ready.Write(r.pending.Bytes())
-				r.pending.Reset()
+				ResetClaudeSSEBuffer(&r.pending)
 			}
 		} else {
 			r.ready.Write(event.Bytes())
