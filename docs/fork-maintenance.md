@@ -321,9 +321,15 @@ return a filtered or enriched list without requiring provider-specific logic in
 
 Upstream now records the source hash of the bytes actually parsed by the config
 loader and serializes watcher reloads. This supersedes the fork's temporary
-observed-hash acknowledgment fix, so `internal/watcher/config_reload.go` has no
-remaining fork production delta. Keep the deterministic callback-write regression
-in `internal/watcher/config_reload_hash_fork_test.go` alongside upstream's
+observed-hash acknowledgment fix. The remaining watcher seam rejects an empty
+parsed snapshot by its source hash: a concurrent save may truncate the file after
+the initial nonempty hash read but before the loader's separate read. Checking
+the file again would miss this race if the save has already restored it. This
+preserves the existing empty-file-ignore policy without changing startup loading
+or accepting an empty snapshot as applied; it does not reject arbitrary nonempty
+partial YAML. The generic empty-snapshot guard is an upstream contribution candidate.
+Keep the deterministic callback-write and empty-second-read regressions in
+`internal/watcher/config_reload_hash_fork_test.go` alongside upstream's
 management-save, hash/load ordering, and concurrent-reload tests. The runtime-only
 config source hash is separate from the fork's auth-file snapshot provenance;
 both protections must survive future syncs.
