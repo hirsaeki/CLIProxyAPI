@@ -230,6 +230,10 @@ func TestPeerControl_MalformedCloseNeverSetsFiniteDeadlines(t *testing.T) {
 			client := dialRole(t, srv.URL, "key", RoleClient, "device", "Device")
 			_ = readTextJSONFrame(t, client)
 			p := lookupTunnelPeer(t, hub, "key", "device")
+			// Receiving server_list does not wait for the writer to release writeMu.
+			// Join that write so this fixture exercises the idle-writer close path.
+			p.writeMu.Lock()
+			p.writeMu.Unlock()
 			transport := p.conn.UnderlyingConn().(*deadlineGuardConn).Conn.(*deadlineTrackingTunnelConn)
 			transport.monitoring.Store(true)
 			// A zero mask preserves the malformed payload without mutating any slices.
