@@ -1,9 +1,20 @@
 package helps
 
-import "bytes"
+import (
+	"bytes"
+	"net/http"
+)
 
 // MaxClaudeSSEEventBytes also bounds multi-line events, not only scanner tokens.
 const MaxClaudeSSEEventBytes = 50 * 1024 * 1024
+
+// ClaudeSSEEventLimitError preserves the executor's overflow response when an
+// upstream Thread reader rejects an event before the outer scanner sees it.
+type ClaudeSSEEventLimitError struct{}
+
+func (ClaudeSSEEventLimitError) Error() string { return "upstream SSE event exceeds maximum size" }
+
+func (ClaudeSSEEventLimitError) StatusCode() int { return http.StatusBadGateway }
 
 // AppendClaudeSSELine rejects oversized events before retaining another line.
 func AppendClaudeSSELine(event *bytes.Buffer, line []byte) bool {

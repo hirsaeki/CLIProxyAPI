@@ -81,6 +81,7 @@ them must stay local to the listed responsibility.
 | `sdk/cliproxy/service_config.go` | Warn when a startup-only availability path changes |
 | `sdk/cliproxy/service_models.go` | Pass native candidates through the fork model-registration seam and preserve static-plugin exclusions in compatible-provider branches |
 | `internal/runtime/executor/claude_executor_stream.go` | Bound complete native and translated Claude SSE events through the fork-owned helper before appending, preserving failed usage on overflow and observing upstream stream usage before resetting each event |
+| `internal/runtime/executor/helps/claude_thread.go` | Apply the same pre-append bounds and drained-buffer release inside the upstream Thread reader; reject scanner errors before terminal parsing or continuity publication |
 | `sdk/api/handlers/claude/code_handlers.go` | Construct the fork-owned bounded observer and wrap upstream stream callbacks, including first-chunk preflight before headers |
 | `internal/discovery/zeroconf.go` | Keep the host-conflict probe receive buffer large enough for complete mDNS datagrams until the upstream buffer fix lands |
 | `sdk/cliproxy/service_executors.go` | Pass candidates to per-auth plugin model resolution |
@@ -520,11 +521,22 @@ written-newline or terminal state. Overflow emits one sanitized error, never a
 synthetic successful terminator. These narrow upstream-file seams are needed
 because the existing scanner and forwarder hooks alone do not bound parsing state.
 
-`TestClaudeExecutorSSEEventLimitFork` exercises native and translated overflow while
-the upstream stays open, including body closure and failed token accounting. The
+`TestClaudeExecutorSSEEventLimitFork` exercises native and translated overflow, with
+and without Thread requests, while the upstream stays open, including body closure
+and failed token accounting. The
 fork-owned helper/handler tests cover exact limits, resets, many short lines,
 unterminated lines, first-chunk handling, and single-error cancellation. Keep these
 alongside the upstream multiline, truncation, and terminal-state regressions.
+
+Upstream's Thread reader now runs before the executor scanners. Its internal event
+and deferred-completion buffers must use the same pre-append limit and release
+large drained buffers. Propagate scanner failures before parsing a partial terminal
+event, so a failed transport cannot publish a successful Thread profile or routing
+state. The outer scanners cannot enforce these guarantees after the inner reader
+has buffered or committed state. `claude_thread_bounds_fork_test.go` covers partial
+terminal transport failures, callback/profile suppression, and drained-buffer
+release. Retire these narrow helper seams when upstream supplies equivalent
+behavior, retaining the regressions.
 
 ## Native plugin completion and Home cancellation
 
@@ -599,12 +611,11 @@ Keep refresh-grant coalescing global across authoritative journals: splitting th
 singleflight key by journal could consume the same one-use grant twice. The
 fork-owned `refresh_journal_shared_fork.go` records a successful shared result in
 each caller's journal before returning, without overwriting existing pending
-claims. Receipt completion uses a bounded acquisition context independent of the
-exchange deadline so a completed rotation is not discarded at timeout.
+claims. This shared-journal seam remains a fork contribution candidate.
 
-The macOS power-state probe must preserve both its underlying error and
-`ErrSIWCRefreshDeferred`; otherwise retry wrappers repeat an unavailable probe.
-The fork-owned Darwin regression and macOS Codex refresh CI job verify that no
-token request or retry is made while the power state is unknown. These are
-upstream contribution candidates; remove the narrow production seams once
-upstream supplies equivalent behavior, retaining the regressions.
+Upstream now supplies the cancellation-independent receipt context and the
+macOS probe error wrapping that preserves `ErrSIWCRefreshDeferred`. Use the
+upstream implementations without the former fork patches. Keep the fork receipt
+and Darwin regressions: they verify that completed rotations survive caller
+cancellation and that an unavailable power-state probe causes no token request
+or retry. The macOS Codex refresh CI job also covers these guarantees.

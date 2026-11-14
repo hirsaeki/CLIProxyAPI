@@ -53,8 +53,17 @@ func TestClaudeSSEUsageCaptureFiltersAuthFork(t *testing.T) {
 }
 
 func TestClaudeExecutorSSEEventLimitFork(t *testing.T) {
-	for _, format := range []sdktranslator.Format{sdktranslator.FormatClaude, sdktranslator.FormatOpenAI} {
-		t.Run(string(format), func(t *testing.T) {
+	for _, tc := range []struct {
+		format sdktranslator.Format
+		thread bool
+	}{
+		{sdktranslator.FormatClaude, false},
+		{sdktranslator.FormatOpenAI, false},
+		{sdktranslator.FormatClaude, true},
+		{sdktranslator.FormatOpenAI, true},
+	} {
+		format := tc.format
+		t.Run(fmt.Sprintf("%s/thread=%t", format, tc.thread), func(t *testing.T) {
 			closed := make(chan struct{})
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				defer close(closed)
@@ -83,9 +92,13 @@ func TestClaudeExecutorSSEEventLimitFork(t *testing.T) {
 			defer cancel()
 			exec := NewClaudeExecutor(&config.Config{})
 			auth := &cliproxyauth.Auth{ID: authID, Attributes: map[string]string{"api_key": "key-123", "base_url": server.URL}}
+			thread := ""
+			if tc.thread {
+				thread = `,"thread":{"type":"create"}`
+			}
 			result, err := exec.ExecuteStream(ctx, auth, cliproxyexecutor.Request{
 				Model:   "claude-opus-5",
-				Payload: []byte(`{"model":"claude-opus-5","messages":[{"role":"user","content":"hi"}],"stream":true}`),
+				Payload: []byte(fmt.Sprintf(`{"model":"claude-opus-5","messages":[{"role":"user","content":"hi"}],"stream":true%s}`, thread)),
 			}, cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatClaude, ResponseFormat: format})
 			if err != nil {
 				t.Fatal(err)
