@@ -65,6 +65,7 @@ func TestPluginErrorCarriesRetryAfterIntoCooldownAndHTTPHeader(t *testing.T) {
 	adapter.provider = provider
 
 	authMgr := coreauth.NewManager(nil, nil, nil)
+	authMgr.SetRetryConfig(0, 0, 0)
 	authMgr.RegisterExecutor(adapter)
 	auth := &coreauth.Auth{
 		ID:         authID,
@@ -89,19 +90,26 @@ func TestPluginErrorCarriesRetryAfterIntoCooldownAndHTTPHeader(t *testing.T) {
 		SourceFormat:   sdktranslator.FormatOpenAI,
 		ResponseFormat: sdktranslator.FormatOpenAI,
 	})
+	after := time.Now()
 	if errExec == nil {
 		t.Fatal("authMgr.Execute returned nil error")
 	}
-	if got := coreauth.SafeResponseHeaders(errExec).Get("Retry-After"); got != "7" {
-		t.Fatalf("SafeResponseHeaders(errExec) Retry-After = %q, want 7", got)
+	// The sole credential's 7s hint is clamped to the 10s quota cooldown floor.
+	// The terminal pool error must advertise that recovery, not the raw hint.
+	if got := coreauth.SafeResponseHeaders(errExec).Get("Retry-After"); got != "10" {
+		t.Fatalf("SafeResponseHeaders(errExec) Retry-After = %q, want 10 (quota cooldown floor)", got)
+	}
+	var marker interface{ IsModelCooldown() bool }
+	if !errors.As(errExec, &marker) || marker == nil || !marker.IsModelCooldown() {
+		t.Fatalf("error %T must report IsModelCooldown() == true", errExec)
 	}
 	updated, okAuth := authMgr.GetByID(authID)
 	if !okAuth || updated == nil {
 		t.Fatalf("GetByID(%q) missing", authID)
 	}
 	state := updated.ModelStates[model]
-	if state == nil || !state.NextRetryAfter.After(before.Add(5*time.Second)) {
-		t.Fatalf("model NextRetryAfter = %v, want at least %v (7s cooldown)", state, before.Add(7*time.Second))
+	if state == nil || state.NextRetryAfter.Before(before.Add(10*time.Second)) || state.NextRetryAfter.After(after.Add(10*time.Second)) {
+		t.Fatalf("model NextRetryAfter = %v, want within [%v, %v] (10s quota cooldown floor)", state, before.Add(10*time.Second), after.Add(10*time.Second))
 	}
 }
 

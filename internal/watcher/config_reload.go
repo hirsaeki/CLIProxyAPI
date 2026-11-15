@@ -102,6 +102,12 @@ func (w *Watcher) reloadConfig() bool {
 		log.Errorf("failed to reload config: %v", errLoadConfig)
 		return false
 	}
+	// A concurrent save can truncate the file after the initial hash check.
+	// Reject the empty snapshot actually parsed, even if the file is restored.
+	if newConfig.SourceHash == config.ComputeSourceHash(nil) {
+		log.Debug("ignoring empty config file read during reload")
+		return false
+	}
 
 	resolvedNewAuthDir := ""
 	if w.mirroredAuthDir != "" {
