@@ -2,7 +2,7 @@ name: Sync fork with upstream
 
 on:
   schedule:
-    - cron: "0 */4 * * *"
+    - cron: "17 */4 * * *"
   workflow_dispatch:
   issues:
     types: [opened]
