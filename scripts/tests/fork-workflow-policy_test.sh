@@ -33,4 +33,18 @@ if grep -Fq '"ensure-no-translator-changes"' "$workflow_dir/release.yaml"; then
   echo 'WinGet publication still requires the upstream translator contribution policy' >&2
   exit 1
 fi
+
+freebsd_job="$(awk '
+  /^  build-freebsd:$/ { in_job=1; next }
+  in_job && /^  [A-Za-z0-9_-]+:$/ { exit }
+  in_job { print }
+' "$workflow_dir/release.yaml")"
+grep -Fxq '    timeout-minutes: 20' <<< "$freebsd_job" || {
+  echo 'FreeBSD release job must retain its overall time bound' >&2
+  exit 1
+}
+grep -Fq 'curl -fsSL --connect-timeout 15 --max-time 600 --retry 3 --retry-max-time 300 --retry-connrefused "$url" -o /tmp/base.txz' <<< "$freebsd_job" || {
+  echo 'FreeBSD sysroot download must allow slow transfers while retaining connection and retry limits' >&2
+  exit 1
+}
 echo 'Fork workflow policy checks passed'
