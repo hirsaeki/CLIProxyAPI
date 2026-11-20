@@ -39,6 +39,17 @@ assert_count() {
   fi
 }
 
+# The plugin replaces the root module locally, so its selected moego version
+# must follow root upgrades rather than requiring an implicit go.mod rewrite.
+root_moego_version="$(awk '$1 == "github.com/MoeForge/moego" { print $2 }' "$repo_root/go.mod")"
+[[ -n "$root_moego_version" ]] || fail 'missing root moego requirement'
+assert_contains "github.com/MoeForge/moego $root_moego_version // indirect" "$repo_root/examples/plugin/vertex-region-models/go/go.mod"
+for suffix in '' '/go.mod'; do
+  checksum="$(awk -v version="$root_moego_version$suffix" '$1 == "github.com/MoeForge/moego" && $2 == version { print }' "$repo_root/go.sum")"
+  [[ -n "$checksum" ]] || fail "missing root moego checksum for $root_moego_version$suffix"
+  grep -Fxq -- "$checksum" "$repo_root/examples/plugin/vertex-region-models/go/go.sum" || fail "plugin moego checksum mismatch for $root_moego_version$suffix"
+done
+
 for workflow in "$release_workflow" "$pr_workflow"; do
   assert_contains "LLVM_MINGW_VERSION: '20260616'" "$workflow"
   assert_contains "LLVM_MINGW_SHA256: 'b9b68a4d276e16fa25802aaba458e4638f64b3884c290aaccdc2d87083b6ca35'" "$workflow"
