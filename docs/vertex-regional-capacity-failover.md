@@ -1,0 +1,90 @@
+# Vertex regional capacity failover
+
+Opt-in for ordinary, text-only Gemini `generateContent` and
+`streamGenerateContent` via the native Vertex service-account executor. The same
+auth entry, service account, OAuth token, project, and exact resolved upstream
+Gemini model are used for every location. No auth files are mutated by a request.
+
+## Configure
+
+In the existing Vertex service-account JSON, add a top-level map from exact
+upstream **model ID** to an ordered list of locations, for example:
+
+```json
+{
+  "location": "us",
+  "vertex_region_failover": {
+    "gemini-4-argon": ["us", "us-central1", "global"]
+  }
+}
+```
+
+This fragment is illustrative, not a statement that this model is available in
+every example location. Verify each pair in the [official Vertex model and
+location tables](https://docs.cloud.google.com/gemini-enterprise-agent-platform/resources/locations)
+and only include approved data-processing jurisdictions. `global` is not a
+regional data-residency guarantee. Configure only equivalent locations for the
+same Standard PayGo model in the same project. Do not use this feature to work
+around project quotas or contractual capacity restrictions.
+
+The first entry must match the saved `location`. Accepted lists have 2–16
+distinct, lowercase official locations; the built-in endpoint set covers
+`global`, `us`, `eu` and the single-region entries in the Gemini location
+tables. Missing or invalid policy entries leave the model on its existing
+native behavior. No catalog alias or wildcard expands a list, and nothing is
+automatically enrolled. The management panel's fixed-location selector is
+unchanged. The region plugin still owns model discovery; its existing hook
+receives the configured credential location and returns candidate models, not
+per-request eligible destinations. The executor uses the explicit per-model
+policy instead of loading the plugin or making a live support probe.
+
+Only Gemini GenerateContent and OpenAI Chat Completions client formats are
+eligible. API keys, countTokens, Imagen and other known non-text model
+families, Interactions (including translated Interactions), OpenAI Responses,
+the Vertex OpenAPI upstream route, non-text requests, calls with tools,
+cached content, explicit quota routing or
+provisioned-throughput headers, custom targets, and other unfamiliar fields
+are outside this mode. They retain existing native behavior. The payload is
+checked after CPA's existing translation and user payload configuration.
+
+## Request behavior
+
+1. **Phase 1:** Visit the first and then every eligible configured location
+   in order at most once, stopping at first success or non-capacity failure.
+   A location already under cooldown is skipped. Only an explicit, temporary
+   **regional capacity** refusal can advance this mode; a generic
+   `429 RESOURCE_EXHAUSTED`, a retry hint alone, quota or acceleration errors,
+   permission errors, unknown structured details, transport errors, and model
+   or endpoint errors are terminal for this opted-in attempt.
+2. **Phase 2:** If the eligible sweep was exhausted by regional capacity,
+   make up to `min(request-retry, auth.request_retry if set, 4)` additional
+   attempts. This **replaces** CPA's generic outer retry or credential rotation
+   for the opted-in attempt. Use capped exponential equal jitter, with
+   a one-second minimum per-region cooldown and the greater valid value from
+   HTTP `Retry-After` and Google RPC retry hints. Only start a retry before
+   `min(max-retry-interval, 8s)` from entry into the retry router and before the
+   caller's deadline if provided. A zero/negative retry count or retry interval
+   disables Phase 2, not the explicitly configured sweep. Existing request
+   contexts bound in-flight network work; CPA does not impose an extra timeout
+   on an accepted upstream response or on a stream.
+3. **Commit:** An HTTP success response ends routing. Streaming errors after
+   an upstream 2xx, even before any downstream payload, are not replayed.
+   Requests and redirects never leave the approved generated Vertex URLs.
+
+Positive regional capacity cooldowns are shared in memory by project, model,
+and location. A short overlapping response cannot replace a longer
+`Retry-After`; successful overlapping requests cannot clear it. A single probe
+can run after a cooldown expires. This is not a durable, cross-instance
+limit. Exhaustion returns 429 without changing generic auth/model quota
+state, and a retry hint reflects the earliest approved location's cooldown.
+CPA's existing request logs identify the attempted host, ordered by attempt,
+and debug logs mark regional-capacity cooldowns. Normal provider logging and
+request cancellation rules still apply.
+
+[Google's 429 guidance](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/deploy/error-code-429)
+describes shared capacity as well as fixed quota and acceleration 429s. The
+generic documented PayGo text is not a positive discriminator, so this mode
+does not rotate on it. The narrow positive classifier is covered by synthetic
+regional-capacity examples. No real provider positive signature or production
+behavior was verified. If an actual response lacks explicit regional-capacity
+evidence, it remains unchanged and terminal in this mode.

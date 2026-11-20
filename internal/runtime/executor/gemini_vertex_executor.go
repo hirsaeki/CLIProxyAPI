@@ -516,7 +516,7 @@ func (e *GeminiVertexExecutor) executeWithServiceAccount(ctx context.Context, au
 		authLabel = auth.Label
 		authType, authValue = auth.AccountInfo()
 	}
-	helps.RecordAPIRequest(ctx, e.cfg, helps.UpstreamRequestLog{
+	requestLog := helps.UpstreamRequestLog{
 		URL:       url,
 		Method:    http.MethodPost,
 		Headers:   httpReq.Header.Clone(),
@@ -526,11 +526,14 @@ func (e *GeminiVertexExecutor) executeWithServiceAccount(ctx context.Context, au
 		AuthLabel: authLabel,
 		AuthType:  authType,
 		AuthValue: authValue,
-	})
+	}
 
 	httpClient := helps.NewProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 	httpClient = reporter.TrackHTTPClient(httpClient)
-	httpResp, errDo := httpClient.Do(httpReq)
+	httpResp, regionRouted, errDo := e.doVertexRegionRequestFork(httpClient, httpReq, auth, opts, projectID, baseModel, location, action, requestLog)
+	if regionRouted {
+		defer func() { err = vertexRegionStopErrorFork(err) }()
+	}
 	if errDo != nil {
 		helps.RecordAPIResponseError(ctx, e.cfg, errDo)
 		return resp, errDo
@@ -865,7 +868,7 @@ func (e *GeminiVertexExecutor) executeStreamWithServiceAccount(ctx context.Conte
 		authLabel = auth.Label
 		authType, authValue = auth.AccountInfo()
 	}
-	helps.RecordAPIRequest(ctx, e.cfg, helps.UpstreamRequestLog{
+	requestLog := helps.UpstreamRequestLog{
 		URL:       url,
 		Method:    http.MethodPost,
 		Headers:   httpReq.Header.Clone(),
@@ -875,11 +878,14 @@ func (e *GeminiVertexExecutor) executeStreamWithServiceAccount(ctx context.Conte
 		AuthLabel: authLabel,
 		AuthType:  authType,
 		AuthValue: authValue,
-	})
+	}
 
 	httpClient := helps.NewProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 	httpClient = reporter.TrackHTTPClient(httpClient)
-	httpResp, errDo := httpClient.Do(httpReq)
+	httpResp, regionRouted, errDo := e.doVertexRegionRequestFork(httpClient, httpReq, auth, opts, projectID, baseModel, location, action, requestLog)
+	if regionRouted {
+		defer func() { err = vertexRegionStopErrorFork(err) }()
+	}
 	if errDo != nil {
 		helps.RecordAPIResponseError(ctx, e.cfg, errDo)
 		return nil, errDo
@@ -1142,7 +1148,11 @@ func (e *GeminiVertexExecutor) executeStreamWithServiceAccount(ctx context.Conte
 			return
 		}
 	}()
-	return &cliproxyexecutor.StreamResult{Headers: httpResp.Header.Clone(), Chunks: out}, nil
+	var chunks <-chan cliproxyexecutor.StreamChunk = out
+	if regionRouted {
+		chunks = vertexRegionStreamFork(ctx, chunks)
+	}
+	return &cliproxyexecutor.StreamResult{Headers: httpResp.Header.Clone(), Chunks: chunks}, nil
 }
 
 // executeStreamWithAPIKey handles streaming authentication using API key credentials.
