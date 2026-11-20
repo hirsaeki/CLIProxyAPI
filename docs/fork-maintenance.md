@@ -72,6 +72,7 @@ them must stay local to the listed responsibility.
 | --- | --- |
 | `internal/config/config.go` | The `OAuthModelAvailabilityFile` configuration field and source-provenance contract |
 | `internal/config/config_load.go` | Advance source provenance only for exact successful loader-owned rewrites |
+| `internal/config/config_defaults.go`, `internal/managementasset/updater.go`, `config.example.yaml` | Use the fork Management Center release only as the default source; preserve explicitly configured repositories and existing last-good/fallback behavior |
 | `internal/registry/model_updater.go` | Apply the local Google model overlay when loading the startup catalog |
 | `internal/registry/catalog_sources.go` | Apply the same overlay before change detection and publication for refreshed catalog sources |
 | `sdk/cliproxy/service.go` | Immutable OAuth availability state fields only |
@@ -119,6 +120,15 @@ alongside the upstream multi-portal tests to cover both native and RPC paths.
 
 Adding another upstream-owned integration file requires documenting why an
 existing seam cannot support the feature.
+
+The panel uses the latest published, non-prerelease GitHub Release and requires
+an asset named `management.html`. Verify that asset on the fork before shipping
+the default change. The config default covers omitted or blank repository values;
+the updater default covers calls without a usable repository URL. Existing
+configs that explicitly pin the upstream panel keep that choice. To opt in to the
+fork after its first release, remove the explicit value or set
+`remote-management.panel-github-repository` to
+`https://github.com/hirsaeki/Cli-Proxy-API-Management-Center`.
 
 Catalog refresh publication now lives in `catalog_sources.go`; the startup loader
 in `model_updater.go` is not used for remote, configured local, or embedded-source
