@@ -530,8 +530,8 @@ func (e *GeminiVertexExecutor) executeWithServiceAccount(ctx context.Context, au
 
 	httpClient := helps.NewProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 	httpClient = reporter.TrackHTTPClient(httpClient)
-	httpResp, regionRouted, errDo := e.doVertexRegionRequestFork(httpClient, httpReq, auth, opts, projectID, baseModel, location, action, requestLog)
-	if regionRouted {
+	httpResp, stopNativeRetries, errDo := e.doVertexRegionRequestFork(httpClient, httpReq, auth, opts, projectID, baseModel, location, action, requestLog)
+	if stopNativeRetries {
 		defer func() { err = vertexRegionStopErrorFork(err) }()
 	}
 	if errDo != nil {
@@ -882,8 +882,8 @@ func (e *GeminiVertexExecutor) executeStreamWithServiceAccount(ctx context.Conte
 
 	httpClient := helps.NewProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 	httpClient = reporter.TrackHTTPClient(httpClient)
-	httpResp, regionRouted, errDo := e.doVertexRegionRequestFork(httpClient, httpReq, auth, opts, projectID, baseModel, location, action, requestLog)
-	if regionRouted {
+	httpResp, stopNativeRetries, errDo := e.doVertexRegionRequestFork(httpClient, httpReq, auth, opts, projectID, baseModel, location, action, requestLog)
+	if stopNativeRetries {
 		defer func() { err = vertexRegionStopErrorFork(err) }()
 	}
 	if errDo != nil {
@@ -1149,7 +1149,7 @@ func (e *GeminiVertexExecutor) executeStreamWithServiceAccount(ctx context.Conte
 		}
 	}()
 	var chunks <-chan cliproxyexecutor.StreamChunk = out
-	if regionRouted {
+	if stopNativeRetries {
 		chunks = vertexRegionStreamFork(ctx, chunks)
 	}
 	return &cliproxyexecutor.StreamResult{Headers: httpResp.Header.Clone(), Chunks: chunks}, nil

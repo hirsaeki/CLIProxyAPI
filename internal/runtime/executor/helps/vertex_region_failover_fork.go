@@ -53,13 +53,14 @@ func (c *VertexRegionCooldownFork) ready(key VertexRegionKeyFork, now time.Time)
 	return now
 }
 
-// Claim admits an attempt, or returns the active cooldown. Call finish once,
-// even on errors or cancellation; a zero time does not create a cooldown.
-func (c *VertexRegionCooldownFork) Claim(key VertexRegionKeyFork, now time.Time) (finish func(time.Time), until time.Time) {
+// Claim admits an attempt, or returns the active cooldown. A recovering
+// admission is the single probe following a recorded capacity cooldown.
+// Call finish once; a zero time does not create a cooldown.
+func (c *VertexRegionCooldownFork) Claim(key VertexRegionKeyFork, now time.Time) (finish func(time.Time), until time.Time, recovering bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if ready := c.ready(key, now); ready.After(now) {
-		return nil, ready
+		return nil, ready, false
 	}
 	probe := c.states[key]
 	if probe != nil {
@@ -103,7 +104,7 @@ func (c *VertexRegionCooldownFork) Claim(key VertexRegionKeyFork, now time.Time)
 		if until.After(state.until) {
 			state.until = until
 		}
-	}, time.Time{}
+	}, time.Time{}, probe != nil
 }
 
 // VertexRegionWaitFork waits without introducing an HTTP read deadline after

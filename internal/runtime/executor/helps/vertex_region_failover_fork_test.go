@@ -11,20 +11,20 @@ func TestVertexRegionCooldownConcurrentFork(t *testing.T) {
 	now := time.Unix(300, 0)
 	a := VertexRegionKeyFork{Project: "project", Model: "gemini-model", Location: "us"}
 	b := VertexRegionKeyFork{Project: "project", Model: "gemini-model", Location: "eu"}
-	first, _ := cooldown.Claim(a, now)
-	overlap, _ := cooldown.Claim(a, now)
-	third, _ := cooldown.Claim(a, now)
-	if first == nil || overlap == nil || third == nil {
+	first, _, wasRecovering := cooldown.Claim(a, now)
+	overlap, _, _ := cooldown.Claim(a, now)
+	third, _, _ := cooldown.Claim(a, now)
+	if first == nil || overlap == nil || third == nil || wasRecovering {
 		t.Fatal("healthy primary requests must not serialize")
 	}
 	until := now.Add(7 * time.Second)
 	first(until)
 	overlap(now.Add(time.Second))
 	third(time.Time{})
-	if finish, got := cooldown.Claim(a, now.Add(time.Second)); finish != nil || !got.Equal(until) {
+	if finish, got, _ := cooldown.Claim(a, now.Add(time.Second)); finish != nil || !got.Equal(until) {
 		t.Fatal("another overlapping failure or success erased cooldown")
 	}
-	if finish, _ := cooldown.Claim(b, now.Add(time.Second)); finish == nil {
+	if finish, _, _ := cooldown.Claim(b, now.Add(time.Second)); finish == nil {
 		t.Fatal("cooldown leaked to another region")
 	} else {
 		finish(time.Time{})
@@ -33,7 +33,10 @@ func TestVertexRegionCooldownConcurrentFork(t *testing.T) {
 	claims := make(chan func(time.Time), 16)
 	for range 16 {
 		wg.Go(func() {
-			if finish, _ := cooldown.Claim(a, until); finish != nil {
+			if finish, _, recovering := cooldown.Claim(a, until); finish != nil {
+				if !recovering {
+					t.Error("admitted probe did not report recovery")
+				}
 				claims <- finish
 			}
 		})
@@ -46,7 +49,7 @@ func TestVertexRegionCooldownConcurrentFork(t *testing.T) {
 	for finish := range claims {
 		finish(time.Time{})
 	}
-	if next, _ := cooldown.Claim(a, until); next == nil {
+	if next, _, _ := cooldown.Claim(a, until); next == nil {
 		t.Fatal("successful probe did not return region to normal traffic")
 	} else {
 		next(time.Time{})

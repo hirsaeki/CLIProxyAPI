@@ -52,10 +52,15 @@ checked after CPA's existing translation and user payload configuration.
 1. **Phase 1:** Visit the first and then every eligible configured location
    in order at most once, stopping at first success or non-capacity failure.
    A location already under cooldown is skipped. Only an explicit, temporary
-   **regional capacity** refusal can advance this mode; a generic
-   `429 RESOURCE_EXHAUSTED`, a retry hint alone, quota or acceleration errors,
-   permission errors, unknown structured details, transport errors, and model
-   or endpoint errors are terminal for this opted-in attempt.
+   **regional capacity** refusal can advance this mode. On the first normal
+   attempt to its configured primary, an exact generic `429 RESOURCE_EXHAUSTED`
+   retry-later response goes back to CPA's existing retry/cooldown policy
+   unchanged, without switching regions in this feature. CPA may still use other
+   configured auth entries according to its own settings; that separate behavior
+   is not governed by this credential's allowlist. After routing has taken over,
+   including cooldown recovery or any attempt to an alternate, a generic 429 is
+   terminal. Quota or acceleration errors, permission errors, unknown details,
+   transport errors, and model or endpoint errors remain terminal.
 2. **Phase 2:** If the eligible sweep was exhausted by regional capacity,
    make up to `min(request-retry, auth.request_retry if set, 4)` additional
    attempts. This **replaces** CPA's generic outer retry or credential rotation
@@ -86,5 +91,6 @@ describes shared capacity as well as fixed quota and acceleration 429s. The
 generic documented PayGo text is not a positive discriminator, so this mode
 does not rotate on it. The narrow positive classifier is covered by synthetic
 regional-capacity examples. No real provider positive signature or production
-behavior was verified. If an actual response lacks explicit regional-capacity
-evidence, it remains unchanged and terminal in this mode.
+behavior was verified. A response without explicit regional-capacity evidence
+does not switch regions; only the narrowly defined first-primary generic
+response above preserves CPA's ordinary retry behavior.

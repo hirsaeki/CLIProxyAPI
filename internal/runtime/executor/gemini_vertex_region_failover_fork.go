@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -220,6 +221,76 @@ func vertexRegionCapacity429Fork(status int, body []byte) bool {
 	return true
 }
 
+// vertexRegionGeneric429Fork recognizes only the explicit generic retry-later
+// envelope. This is not evidence of regional capacity or of fixed quota; on
+// the first normal primary admission CPA can apply its existing retry policy.
+func vertexRegionGeneric429Fork(body []byte) bool {
+	if len(body) > vertexRegionCapacityMaxFork || !ojson.ValidBytes(body) {
+		return false
+	}
+	root := ojson.ParseBytes(body)
+	if !vertexRegionKnownKeysFork(root, "error") {
+		return false
+	}
+	failure := root.Get("error")
+	if !vertexRegionKnownKeysFork(failure, "code", "status", "message", "details") ||
+		failure.Get("code").Raw != "429" || failure.Get("status").String() != "RESOURCE_EXHAUSTED" {
+		return false
+	}
+	message := strings.ToLower(strings.TrimSpace(failure.Get("message").String()))
+	message = strings.TrimSuffix(message, " please refer to https://cloud.google.com/vertex-ai/generative-ai/docs/error-code-429 for more details.")
+	switch message {
+	case "resource exhausted. please try again later.", "resource exhausted, please try again later.":
+	default:
+		return false
+	}
+	details := failure.Get("details")
+	if !details.Exists() {
+		return true
+	}
+	if !details.IsArray() {
+		return false
+	}
+	items := details.Array()
+	if len(items) == 0 {
+		return true
+	}
+	if len(items) != 1 || !vertexRegionKnownKeysFork(items[0], "@type", "retryDelay") ||
+		items[0].Get("@type").String() != "type.googleapis.com/google.rpc.RetryInfo" {
+		return false
+	}
+	value := items[0].Get("retryDelay").String()
+	seconds, ok := strings.CutSuffix(value, "s")
+	if !ok || len(seconds) == 0 || seconds[0] < '0' || seconds[0] > '9' || strings.IndexFunc(seconds, func(c rune) bool {
+		return c != '.' && (c < '0' || c > '9')
+	}) >= 0 {
+		return false
+	}
+	if _, fraction, dotted := strings.Cut(seconds, "."); dotted && (len(fraction) == 0 || len(fraction) > 9) {
+		return false
+	}
+	delay, err := time.ParseDuration(value)
+	return err == nil && delay >= 0
+}
+
+func vertexRegionKnownKeysFork(result ojson.Result, fields ...string) bool {
+	if !result.IsObject() {
+		return false
+	}
+	seen := make(map[string]bool, len(fields))
+	valid := true
+	result.ForEach(func(key, _ ojson.Result) bool {
+		name := key.String()
+		if seen[name] || !slices.Contains(fields, name) {
+			valid = false
+			return false
+		}
+		seen[name] = true
+		return true
+	})
+	return valid
+}
+
 // Regional capacity stays local to the route cooldown. It is not credential
 // or model quota exhaustion in the Manager's generic cooldown ledger.
 type vertexRegionCapacityFailureFork struct{ error }
@@ -268,8 +339,7 @@ func (e *GeminiVertexExecutor) doVertexRegionRequestFork(client *http.Client, re
 		helps.RecordAPIResponseMetadata(req.Context(), e.cfg, resp.StatusCode, resp.Header.Clone())
 		helps.AppendAPIResponseChunk(req.Context(), e.cfg, raw)
 	}
-	resp, err := vertexRegionRouterFork.do(client, req, project, model, action, locations, retries, maxWait, record, recordCapacity)
-	return resp, true, err
+	return vertexRegionRouterFork.do(client, req, project, model, action, locations, retries, maxWait, record, recordCapacity)
 }
 
 func vertexRegionRequestEligibleFork(req *http.Request, project, model, primary, action string) bool {
@@ -310,7 +380,8 @@ func vertexRegionPathFork(project, model, location, action string) string {
 	return fmt.Sprintf("/%s/projects/%s/locations/%s/publishers/google/models/%s:%s", vertexAPIVersion, project, location, model, action)
 }
 
-func (p vertexRegionRouteFork) do(original *http.Client, req *http.Request, project, model, action string, locations []string, retries int, maxWait time.Duration, record func(*http.Request), recordCapacity func(*http.Response, []byte)) (*http.Response, error) {
+// The boolean result says whether the caller must stop native retries.
+func (p vertexRegionRouteFork) do(original *http.Client, req *http.Request, project, model, action string, locations []string, retries int, maxWait time.Duration, record func(*http.Request), recordCapacity func(*http.Response, []byte)) (*http.Response, bool, error) {
 	ctx := req.Context()
 	// A route never forwards credentials to a redirect target, even within
 	// Google. Only the explicitly approved, generated URL below is sent.
@@ -323,12 +394,13 @@ func (p vertexRegionRouteFork) do(original *http.Client, req *http.Request, proj
 	}
 	var lastErr statusErr
 	capacitySeen := false
-	attempt := func(location string) (*http.Response, bool, error) {
+	handoff := false
+	attempt := func(location string, firstPrimary bool) (*http.Response, bool, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, false, err
 		}
 		key := helps.VertexRegionKeyFork{Project: project, Model: model, Location: location}
-		finish, until := p.cooldown.Claim(key, p.now())
+		finish, until, recovering := p.cooldown.Claim(key, p.now())
 		if finish == nil {
 			if !until.IsZero() {
 				capacitySeen = true
@@ -360,6 +432,9 @@ func (p vertexRegionRouteFork) do(original *http.Client, req *http.Request, proj
 		prefix, errRead := io.ReadAll(io.LimitReader(resp.Body, vertexRegionCapacityMaxFork+1))
 		if errRead != nil || !vertexRegionCapacity429Fork(resp.StatusCode, prefix) {
 			// Preserve the original response for native error handling.
+			// Only the untouched primary's complete generic 429 can fall
+			// back to CPA's existing credential and retry policy.
+			handoff = firstPrimary && !recovering && errRead == nil && vertexRegionGeneric429Fork(prefix)
 			resp.Body = vertexRegionPrefixedBodyFork{io.MultiReader(bytes.NewReader(prefix), resp.Body), resp.Body}
 			return resp, true, nil
 		}
@@ -392,9 +467,9 @@ func (p vertexRegionRouteFork) do(original *http.Client, req *http.Request, proj
 		return earliest
 	}
 
-	for _, location := range locations {
-		if resp, _, err := attempt(location); resp != nil || err != nil {
-			return resp, err
+	for index, location := range locations {
+		if resp, _, err := attempt(location, index == 0); resp != nil || err != nil {
+			return resp, !handoff, err
 		}
 	}
 	// Each Phase 2 iteration can issue at most one new HTTP request. Skip a
@@ -410,15 +485,15 @@ func (p vertexRegionRouteFork) do(original *http.Client, req *http.Request, proj
 			break
 		}
 		if err := p.wait(ctx, ready.Sub(now)); err != nil {
-			return nil, err
+			return nil, true, err
 		}
 		if !p.now().Before(waitLimit) {
 			break
 		}
 		for _, location := range locations {
-			resp, sent, err := attempt(location)
+			resp, sent, err := attempt(location, false)
 			if resp != nil || err != nil {
-				return resp, err
+				return resp, true, err
 			}
 			if sent {
 				break
@@ -426,7 +501,7 @@ func (p vertexRegionRouteFork) do(original *http.Client, req *http.Request, proj
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, true, err
 	}
 	if lastErr.code == 0 {
 		lastErr = statusErr{code: http.StatusTooManyRequests, msg: "vertex approved endpoints are cooling down"}
@@ -438,7 +513,7 @@ func (p vertexRegionRouteFork) do(original *http.Client, req *http.Request, proj
 	if delay := earliestReady(now).Sub(now); delay > 0 {
 		lastErr.retryAfter = &delay
 	}
-	return nil, vertexRegionCapacityFailureFork{lastErr}
+	return nil, true, vertexRegionCapacityFailureFork{lastErr}
 }
 
 // The HTTP router ends at 2xx. Do not let bootstrap retry or re-select the

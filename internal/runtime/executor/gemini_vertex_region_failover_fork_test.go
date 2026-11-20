@@ -26,6 +26,7 @@ import (
 const (
 	mockVertexModelFork = "gemini-4-test"
 	mockVertexBodyFork  = `{"contents":[{"role":"user","parts":[{"text":"synthetic request"}]}]}`
+	mockGeneric429Fork  = `{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","message":"Resource exhausted. Please try again later."}}`
 	mockCapacityFork    = `{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","message":"Temporary regional capacity overload; please try again later."}}`
 )
 
@@ -74,6 +75,103 @@ func TestVertexRegionClassifierAndEligibilityFork(t *testing.T) {
 		if vertexRegionPlainTextFork(body) {
 			t.Fatalf("restricted payload eligible: %s", body)
 		}
+	}
+}
+
+func TestVertexRegionGenericEnvelopeFork(t *testing.T) {
+	const retryInfo = `,"details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"1.25s"}]`
+	withDetails := func(details string) string {
+		return strings.TrimSuffix(mockGeneric429Fork, "}}") + details + "}}"
+	}
+	for _, tc := range []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"canonical", mockGeneric429Fork, true},
+		{"documented-comma", strings.Replace(mockGeneric429Fork, "exhausted. Please", "exhausted, please", 1), true},
+		{"documentation-suffix", strings.Replace(mockGeneric429Fork, "later.", "later. Please refer to https://cloud.google.com/vertex-ai/generative-ai/docs/error-code-429 for more details.", 1), true},
+		{"retry-info", withDetails(retryInfo), true},
+		{"empty-details", withDetails(`,"details":[]`), true},
+		{"truncated", mockGeneric429Fork[:len(mockGeneric429Fork)-1], false},
+		{"positive-capacity", mockCapacityFork, false},
+		{"explicit-quota", strings.Replace(mockGeneric429Fork, "Resource exhausted.", "Quota limit exceeded.", 1), false},
+		{"quota-detail", withDetails(`,"details":[{"@type":"type.googleapis.com/google.rpc.QuotaFailure"}]`), false},
+		{"unknown-detail", withDetails(`,"details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"RATE_LIMIT_EXCEEDED"}]`), false},
+		{"retry-info-plus-unknown", withDetails(strings.TrimSuffix(retryInfo, "]") + `,{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"RATE_LIMIT_EXCEEDED"}]`), false},
+		{"non-protobuf-duration", withDetails(strings.Replace(retryInfo, "1.25s", "1m1s", 1)), false},
+		{"excess-retry-precision", withDetails(strings.Replace(retryInfo, "1.25s", "1.1234567890s", 1)), false},
+		{"empty-retry-info", withDetails(strings.Replace(retryInfo, "1.25s", "", 1)), false},
+		{"unknown-field", withDetails(`,"reason":"PROJECT_QUOTA_EXCEEDED"`), false},
+		{"duplicate-detail", withDetails(`,"details":[{"@type":"type.googleapis.com/google.rpc.QuotaFailure"}]` + retryInfo), false},
+		{"string-code", strings.Replace(mockGeneric429Fork, "429", `"429"`, 1), false},
+	} {
+		if got := vertexRegionGeneric429Fork([]byte(tc.body)); got != tc.want {
+			t.Errorf("%s: generic = %t, want %t", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestVertexRegionGenericOwnershipFork(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		state      string
+		wantLoc    string
+		stopNative bool
+	}{
+		{"untouched-primary-handoff", "", "global", false},
+		{"active-cooldown-no-handoff", "active", "us", true},
+		{"recovery-primary-no-handoff", "expired", "global", true},
+		{"in-flight-recovery-no-handoff", "in-flight", "us", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const project = "mock-project"
+			const action = "generateContent"
+			now := time.Unix(100, 0)
+			cooldown := &helps.VertexRegionCooldownFork{}
+			key := helps.VertexRegionKeyFork{Project: project, Model: mockVertexModelFork, Location: "global"}
+			if tc.state != "" {
+				finish, _, _ := cooldown.Claim(key, now.Add(-2*time.Second))
+				until := now
+				if tc.state == "active" {
+					until = now.Add(time.Second)
+				}
+				finish(until)
+				if tc.state == "in-flight" {
+					probe, _, _ := cooldown.Claim(key, now)
+					defer probe(time.Time{})
+				}
+			}
+			router := vertexRegionRouteFork{
+				cooldown: cooldown,
+				now:      func() time.Time { return now },
+				wait:     func(context.Context, time.Duration) error { t.Fatal("generic 429 entered Phase 2"); return nil },
+				delay:    func(int) time.Duration { t.Fatal("generic 429 entered Phase 2"); return 0 },
+			}
+			var paths []string
+			body := " " + mockGeneric429Fork + "\n"
+			client := &http.Client{Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+				paths = append(paths, req.URL.Path)
+				_ = req.Body.Close()
+				return &http.Response{StatusCode: 429, Header: http.Header{"Retry-After": []string{"17"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
+			})}
+			req, err := http.NewRequest(http.MethodPost, vertexBaseURL("global")+vertexRegionPathFork(project, mockVertexModelFork, "global", action), strings.NewReader(mockVertexBodyFork))
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp, stop, err := router.do(client, req, project, mockVertexModelFork, action, []string{"global", "us"}, 4, 8*time.Second, func(*http.Request) {}, func(*http.Response, []byte) {})
+			if err != nil || resp == nil || resp.StatusCode != 429 {
+				t.Fatalf("response=%v err=%v", resp, err)
+			}
+			defer resp.Body.Close()
+			data, err := io.ReadAll(resp.Body)
+			if err != nil || string(data) != body || resp.Header.Get("Retry-After") != "17" {
+				t.Fatalf("lost response: %q headers=%v err=%v", data, resp.Header, err)
+			}
+			if want := []string{vertexRegionPathFork(project, mockVertexModelFork, tc.wantLoc, action)}; !slices.Equal(paths, want) || stop != tc.stopNative {
+				t.Fatalf("paths=%q stop=%t, want %q/%t", paths, stop, want, tc.stopNative)
+			}
+		})
 	}
 }
 
@@ -153,7 +251,10 @@ func TestVertexRegionRoutingPhasesFork(t *testing.T) {
 				t.Fatal(err)
 			}
 			req.Header.Set("Authorization", "Bearer synthetic")
-			resp, err := p.do(client, req, project, mockVertexModelFork, action, tc.locations, tc.retries, tc.window, func(*http.Request) {}, func(*http.Response, []byte) {})
+			resp, stop, err := p.do(client, req, project, mockVertexModelFork, action, tc.locations, tc.retries, tc.window, func(*http.Request) {}, func(*http.Response, []byte) {})
+			if !stop {
+				t.Fatal("regional capacity routing did not own the request")
+			}
 			if resp != nil {
 				_ = resp.Body.Close()
 			}
@@ -192,6 +293,14 @@ func TestVertexRegionNativeManagerBoundaryFork(t *testing.T) {
 		{"stream-last-eligible", true, true, "fallback", []string{"global", "us", "eu"}},
 		{"no-outer-unary-retry", false, true, "all", []string{"global", "us", "eu"}},
 		{"no-outer-stream-retry", true, true, "all", []string{"global", "us", "eu"}},
+		{"primary-generic-unary-opted-out", false, false, "generic", []string{"global", "europe-west4"}},
+		{"primary-generic-unary-opted-in", false, true, "generic", []string{"global", "europe-west4"}},
+		{"primary-generic-stream-opted-out", true, false, "generic", []string{"global", "europe-west4"}},
+		{"primary-generic-stream-opted-in", true, true, "generic", []string{"global", "europe-west4"}},
+		{"first-primary-native-timed-retry-opted-out", false, false, "generic-outer", []string{"global", "global"}},
+		{"first-primary-native-timed-retry-opted-in", false, true, "generic-outer", []string{"global", "global"}},
+		{"after-capacity-generic-unary", false, true, "capacity-then-generic", []string{"global", "us"}},
+		{"after-capacity-generic-stream", true, true, "capacity-then-generic", []string{"global", "us"}},
 		{"permanent-quota", false, true, "quota", []string{"global"}},
 		{"authentication-error", false, true, "auth", []string{"global"}},
 		{"redirect", false, true, "redirect", []string{"global"}},
@@ -216,14 +325,22 @@ func TestVertexRegionNativeManagerBoundaryFork(t *testing.T) {
 			if !ok {
 				t.Fatal("invalid synthetic auth")
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			timeout := 5 * time.Second
+			if test.mode == "generic-outer" {
+				// The native Manager uses a 10s minimum cooldown even
+				// with subsecond RetryInfo. Run the parity cases together.
+				t.Parallel()
+				timeout = 22 * time.Second
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
 			defer cancel()
 			pipeR, pipeW := io.Pipe()
 			defer pipeR.Close()
 			defer pipeW.Close()
 			var attempts []string
+			var attemptTimes []time.Time
 			var sentBody string
-			var stopped = statusErr{code: 429, msg: mockCapacityFork}
+			var stopped = statusErr{code: 429, msg: mockGeneric429Fork}
 			transport := http.DefaultTransport.(*http.Transport).Clone()
 			transport.Proxy = nil
 			defer transport.CloseIdleConnections()
@@ -232,7 +349,7 @@ func TestVertexRegionNativeManagerBoundaryFork(t *testing.T) {
 					return transport.RoundTrip(r)
 				}
 				var location string
-				for _, candidate := range []string{"global", "us", "eu"} {
+				for _, candidate := range []string{"global", "us", "eu", "europe-west4"} {
 					if r.URL.Scheme+"://"+r.URL.Host == vertexBaseURL(candidate) {
 						location = candidate
 					}
@@ -254,6 +371,7 @@ func TestVertexRegionNativeManagerBoundaryFork(t *testing.T) {
 					return nil, fmt.Errorf("payload changed")
 				}
 				attempts = append(attempts, location)
+				attemptTimes = append(attemptTimes, time.Now())
 				resp := &http.Response{StatusCode: 200, Header: http.Header{}}
 				const result = `{"candidates":[{"content":{"role":"model","parts":[{"text":"synthetic-output"}]},"finishReason":"STOP"}]}`
 				out := result
@@ -265,6 +383,19 @@ func TestVertexRegionNativeManagerBoundaryFork(t *testing.T) {
 				case "all", "opted-out-capacity":
 					resp.StatusCode, out = 429, mockCapacityFork
 					resp.Header.Set("Retry-After", "20")
+				case "generic", "capacity-then-generic":
+					if (location == "global" && test.mode == "generic") || (location == "us" && test.mode == "capacity-then-generic") {
+						resp.StatusCode, out = 429, mockGeneric429Fork
+						resp.Header.Set("Retry-After", "20")
+					} else if location == "global" {
+						resp.StatusCode, out = 429, mockCapacityFork
+					}
+				case "generic-outer":
+					if len(attempts) == 1 {
+						resp.StatusCode = 429
+						out = strings.TrimSuffix(mockGeneric429Fork, "}}") +
+							`,"details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"0.01s"}]}}`
+					}
 				case "quota":
 					resp.StatusCode, out = 429, `{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","message":"Quota exceeded."}}`
 				case "auth":
@@ -292,19 +423,33 @@ func TestVertexRegionNativeManagerBoundaryFork(t *testing.T) {
 			}))
 			cfg := &config.Config{RequestRetry: 3, MaxRetryInterval: 4}
 			m := cliproxyauth.NewManager(nil, nil, nil)
-			if test.optIn {
+			if test.mode == "generic-outer" {
+				m.SetRetryConfig(1, 16*time.Second, 1)
+			} else if test.optIn || test.mode == "generic" {
 				m.SetRetryConfig(3, 4*time.Second, 2)
 			} else {
 				m.SetRetryConfig(0, 0, 1)
 			}
 			m.RegisterExecutor(NewGeminiVertexExecutor(cfg))
 			for j, id := range []string{"primary", "other-auth"} {
+				if test.mode == "generic-outer" && j > 0 {
+					break
+				}
 				auth := &cliproxyauth.Auth{ID: t.Name() + id, Provider: "vertex", Status: cliproxyauth.StatusActive,
 					Attributes: map[string]string{"priority": strconv.Itoa(10 - j*10)},
 					Metadata:   map[string]any{"project_id": project, "location": "global", "service_account": sa},
 				}
+				if j == 1 && (test.mode == "generic" || test.mode == "capacity-then-generic") {
+					// Native alternative auth is deliberately outside the
+					// first account's automatic regional allowlist.
+					auth.Metadata["location"] = "europe-west4"
+				}
 				if j == 0 && test.optIn {
 					auth.Metadata[vertexRegionPolicyKeyFork] = map[string]any{mockVertexModelFork: []any{"global", "us", "eu"}}
+				}
+				if test.mode == "generic-outer" {
+					auth.Metadata["request_retry"] = 1
+				} else if j == 0 && (test.optIn || test.mode == "generic") {
 					auth.Metadata["request_retry"] = 0
 				}
 				if _, err := m.Register(ctx, auth); err != nil {
@@ -344,7 +489,10 @@ func TestVertexRegionNativeManagerBoundaryFork(t *testing.T) {
 			if !slices.Equal(attempts, test.want) {
 				t.Fatalf("attempts=%v want=%v err=%v", attempts, test.want, runErr)
 			}
-			if test.mode == "fallback" {
+			if test.mode == "generic-outer" && attemptTimes[1].Sub(attemptTimes[0]) < 9*time.Second {
+				t.Fatal("native retry did not wait for the cooldown floor")
+			}
+			if test.mode == "fallback" || test.mode == "generic" || test.mode == "generic-outer" {
 				if runErr != nil || !strings.Contains(out.String(), "synthetic-output") {
 					t.Fatalf("output=%q err=%v", out.String(), runErr)
 				}
