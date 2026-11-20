@@ -234,7 +234,7 @@ class ForkSyncIssueTests(unittest.TestCase):
         self.assertEqual(WORKFLOW.count('group: sync-upstream-'), 1)
 
     def test_workflow_wiring_permissions_and_trusted_checkout(self):
-        self.assertIn('on:\n  schedule:\n    - cron: "0 */4 * * *"\n'
+        self.assertIn('on:\n  schedule:\n    - cron: "17 */4 * * *"\n'
                       '  workflow_dispatch:\n  issues:\n    types: [opened]\n', WORKFLOW)
         self.assertIn('permissions:\n  contents: read\n', WORKFLOW)
         self.assertEqual(WORKFLOW.count('permissions:'), 1)

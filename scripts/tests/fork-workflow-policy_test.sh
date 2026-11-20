@@ -28,7 +28,7 @@ done
 for workflow in sync-upstream.yml docker-image-ghcr.yml release.yaml repository-bundle.yml winget-manifest-test.yml pr-test-build.yml; do
   [[ -s "$workflow_dir/$workflow" ]] || { echo "missing fork workflow: $workflow" >&2; exit 1; }
 done
-grep -Fq 'cron: "0 */4 * * *"' "$workflow_dir/sync-upstream.yml"
+grep -Fq 'cron: "17 */4 * * *"' "$workflow_dir/sync-upstream.yml"
 if grep -Fq '"ensure-no-translator-changes"' "$workflow_dir/release.yaml"; then
   echo 'WinGet publication still requires the upstream translator contribution policy' >&2
   exit 1
