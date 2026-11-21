@@ -47,7 +47,8 @@ jobs:
     needs: changes
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Budget both Go passes and the Solaris cross-build on cold runners.
+    timeout-minutes: 22
     steps:
       - name: Require successful change classification
         if: needs.changes.result != 'success' || (needs.changes.outputs.manifest_only != 'true' && needs.changes.outputs.manifest_only != 'false')
