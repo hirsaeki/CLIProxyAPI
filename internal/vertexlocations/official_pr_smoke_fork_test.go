@@ -1,12 +1,15 @@
 package vertexlocations
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"golang.org/x/net/html"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -51,14 +54,20 @@ func TestOfficialVertexInventoryPR171SmokeFork(t *testing.T) {
 	client := &http.Client{Transport: transport, CheckRedirect: refuseRedirectFork}
 	var inventory Inventory
 	var status RefreshStatus
+	var raw []byte
 	inventory.refresh(ctx, func(ctx context.Context) ([]byte, error) {
-		return fetchOfficialFork(ctx, client)
+		body, err := fetchOfficialFork(ctx, client)
+		raw = body
+		return body, err
 	}, time.Now, func(value RefreshStatus) { status = value })
 
 	now := time.Now()
 	snapshot := inventory.Current(now)
 	if status.State != "fresh" || snapshot == nil || status.Err != nil ||
 		status.FreshUntil.Sub(status.VerifiedAt) != freshnessFork {
+		if len(raw) > 0 {
+			officialShapePR171Fork(t, raw)
+		}
 		t.Fatalf("official Vertex inventory did not publish fresh evidence (state=%q): %v", status.State, status.Err)
 	}
 	pairs := 0
@@ -89,4 +98,100 @@ func TestOfficialVertexInventoryPR171SmokeFork(t *testing.T) {
 			t.Fatal("could not record the Actions smoke result")
 		}
 	}
+}
+
+// Diagnostics intentionally emit only fixed category indices and enum counts.
+func officialShapePR171Fork(t *testing.T, raw []byte) {
+	root, err := html.Parse(bytes.NewReader(raw))
+	if err != nil {
+		return
+	}
+	active := false
+	visitDescendants(root, func(n *html.Node) bool {
+		if n.Type != html.ElementNode {
+			return true
+		}
+		if n.Data == "h2" {
+			active = nodeText(n) == googleSectionFork
+		}
+		if !active || n.Data != "table" {
+			return true
+		}
+		var locations []string
+		for _, head := range directChildren(n, "thead") {
+			for _, row := range directChildren(head, "tr") {
+				cells := directChildren(row, "th")
+				for _, cell := range cells {
+					if m := locationSuffixPattern.FindStringSubmatch(strings.ToLower(nodeText(cell))); len(m) == 2 {
+						locations = append(locations, m[1])
+					}
+				}
+			}
+		}
+		var saw, in bool
+		var textRows, otherRows, positive, negative, unknown, blank, checkIcon, closeIcon, otherIcon, semanticText int
+		for _, tb := range directChildren(n, "tbody") {
+			for _, row := range directChildren(tb, "tr") {
+				cells := directChildren(row, "td")
+				if len(cells) == 1 && hasClass(cells[0], "vertex-ai-table-heading") {
+					in = strings.EqualFold(nodeText(cells[0]), "Gemini models")
+					saw = saw || in
+					continue
+				}
+				if !in || len(cells) < 2 {
+					continue
+				}
+				model, omit := exactModelIDFork(cells[0])
+				if omit || !TextModel(model) {
+					otherRows++
+					continue
+				}
+				textRows++
+				for _, cell := range cells[1:] {
+					markers := 0
+					visitDescendants(cell, func(node *html.Node) bool {
+						for _, a := range node.Attr {
+							value := strings.ToLower(strings.TrimSpace(a.Val))
+							if a.Key == "aria-label" {
+								markers++
+								switch value {
+								case "supported":
+									positive++
+								case "unsupported", "not supported":
+									negative++
+								default:
+									unknown++
+								}
+							}
+							if a.Key == "class" {
+								for _, token := range strings.Fields(value) {
+									switch token {
+									case "check", "check_circle", "check-circle", "supported", "devsite-icon-check":
+										checkIcon++
+									case "close", "cancel", "not-supported", "devsite-icon-close":
+										closeIcon++
+									case "material-icons", "devsite-icon":
+										otherIcon++
+									}
+								}
+							}
+						}
+						return true
+					})
+					if markers == 0 && elementCountFork(cell) == 0 && strings.TrimSpace(nodeText(cell)) == "" {
+						blank++
+					}
+					if text := strings.ToLower(strings.TrimSpace(nodeText(cell))); text == "supported" || text == "not supported" || text == "unsupported" || text == "check" || text == "close" {
+						semanticText++
+					}
+				}
+			}
+		}
+		if saw {
+			_, _, strict := verifiedTableFork(n)
+			noPositive := strict != nil && strict.Error() == "Gemini inventory table has no positive support markers"
+			t.Logf("official shape group=%d columns=%d text_rows=%d other_rows=%d supported=%d unsupported=%d unknown=%d blank=%d check_class=%d close_class=%d generic_icon=%d known_text=%d strict_ok=%t no_positive=%t", locationGroupFork(locations), len(locations), textRows, otherRows, positive, negative, unknown, blank, checkIcon, closeIcon, otherIcon, semanticText, strict == nil, noPositive)
+		}
+		return true
+	})
 }
