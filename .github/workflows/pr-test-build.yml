@@ -179,6 +179,13 @@ jobs:
         run: |
           git rev-parse HEAD HEAD^{tree}
           git diff --exit-code
+      - name: Cross-build for Solaris
+        if: needs.changes.outputs.manifest_only != 'true'
+        env:
+          GOOS: solaris
+          GOARCH: amd64
+          CGO_ENABLED: 0
+        run: go build -o "$RUNNER_TEMP/test-output-solaris" ./cmd/server
       - name: Refresh models catalog
         if: needs.changes.outputs.manifest_only != 'true'
         run: bash .github/scripts/refresh-model-catalogs.sh
