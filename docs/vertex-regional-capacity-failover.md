@@ -7,8 +7,39 @@ Gemini model are used for every location. No auth files are mutated by a request
 
 ## Configure
 
-In the existing Vertex service-account JSON, add a top-level map from exact
-upstream **model ID** to an ordered list of locations, for example:
+For a managed Vertex service-account credential in CPA's local file store, a build that includes
+the Phase 1 backend for [#173](https://github.com/hirsaeki/CLIProxyAPI/issues/173)
+can manage the policy through its authenticated v8 Management API:
+
+- `GET /v8/management/credentials/vertex-failover?name=vertex-example.json`
+- `PATCH /v8/management/credentials/vertex-failover` with
+  `{"name":"vertex-example.json","mode":"automatic"}` or `"mode":"off"`.
+
+Both accept the optional `auth_index` (query or body respectively) to verify
+the credential identity. The response only contains mode and explicitness,
+for example `{"mode":"automatic","explicit":true}`; no credentials or legacy
+policy contents are returned. Older CPA builds lack this route. A Management
+Center control requires the separate UI update. Git-, object-, and
+Postgres-backed credentials are not editable through this endpoint.
+
+New settings are persisted as `vertex_region_failover_mode`, and successful
+changes take effect on subsequent requests without a restart. The fixed
+primary location is unchanged. When neither mode nor legacy mapping is
+present, the default is OFF (`"explicit":false`). Explicit OFF overrides
+any legacy mapping. Explicit automatic mode allows **all safe built-in
+endpoints** supported by fresh official evidence for the exact upstream
+model. The saved primary is first, followed by Global, US, EU, and the
+remaining documented groups in stable built-in order, omitting duplicates
+and unsupported locations. Do not enable automatic mode if data must stay
+in a particular geography: Global is not a data-residency guarantee, and
+other regions may process requests.
+
+### Legacy restricted policy
+
+Without an explicit mode, existing per-model lists continue unchanged, and
+the API reports `{"mode":"legacy","explicit":false}`. Changing mode never
+deletes the stored list. The legacy mapping in the existing credential JSON
+is a top-level map from exact upstream **model ID** to an ordered list:
 
 ```json
 {
@@ -61,12 +92,12 @@ not new evidence. Hard freshness is six hours from the last fully verified
 response. Repeated failed refreshes **do not** extend it.
 
 CPA keeps the configured primary even when a catalog entry is unknown. For
-secondaries, it intersects the explicit allowlist with fresh exact-model
-support, preserving order; it checks the latest evidence again before each
+secondaries, it intersects the selected mode's ordered destinations with
+fresh exact-model support, preserving order; it checks the latest evidence again before each
 secondary attempt. If no secondary qualifies at entry (including at cold
 startup or after expiry), the new router does not take over and the native
 primary path is unchanged. Existing CPA retry and configured alternate-auth
-behavior remains independent of this credential's allowlist when the native
+behavior remains independent of this credential's regional policy when the native
 path owns the request. Evidence is published availability, not project IAM,
 entitlement, data residency or live capacity.
 
@@ -85,7 +116,7 @@ between refresh ticks.
    retry-later response goes back to CPA's existing retry/cooldown policy
    unchanged, without switching regions in this feature. CPA may still use other
    configured auth entries according to its own settings; that separate behavior
-   is not governed by this credential's allowlist. After routing has taken over,
+   is not governed by this credential's regional policy. After routing has taken over,
    including cooldown recovery or any attempt to an alternate, a generic 429 is
    terminal. Quota or acceleration errors, permission errors, unknown details,
    transport errors, and model or endpoint errors remain terminal.

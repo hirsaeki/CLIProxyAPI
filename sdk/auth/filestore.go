@@ -101,6 +101,10 @@ func (s *FileTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (str
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if cliproxyauth.RequiresManagedFileAuthSaveFork(ctx) {
+		return patchManagedVertexModeFork(ctx, path, auth)
+	}
+
 	if err = os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return "", fmt.Errorf("auth filestore: create dir failed: %w", err)
 	}
