@@ -1321,6 +1321,9 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 					errExec = annotateTrustedRetryAfterByHint(errExec)
 					syncPreferredUpstreamError(&upstreamErr, errExec)
 				}
+				if isRequestStopError(errExec) {
+					return cliproxyexecutor.Response{}, errExec
+				}
 				if okAction {
 					if isRequestScopedStop(action, okAction) {
 						return cliproxyexecutor.Response{}, wrapRequestStopError(errExec)
