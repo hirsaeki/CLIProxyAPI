@@ -102,6 +102,10 @@ func (h *Handler) ImportVertexCredential(c *gin.Context) {
 	if reqCtx := c.Request.Context(); reqCtx != nil {
 		ctx = reqCtx
 	}
+	// Serialize the disk-to-manager publication with Vertex failover edits
+	// and the tracked management upload/delete operations.
+	h.siwcCommitMu.Lock()
+	defer h.siwcCommitMu.Unlock()
 	savedPath, err := h.saveTokenRecord(ctx, record)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "save_failed", "message": err.Error()})

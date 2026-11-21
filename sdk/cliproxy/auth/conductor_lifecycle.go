@@ -333,6 +333,9 @@ func (m *Manager) Modify(ctx context.Context, id string, expectedEpoch uint64, e
 	if expectedEpoch != 0 && expectedEpoch < currentEpoch {
 		return nil, false, fmt.Errorf("update auth %s: stale registration epoch %d < %d", id, expectedEpoch, currentEpoch)
 	}
+	if requireAuthPersistenceFork(ctx) {
+		ctx = context.WithValue(ctx, authPersistenceOriginalKeyFork{}, current.Clone().Metadata)
+	}
 	if errEdit := edit(current); errEdit != nil {
 		return nil, false, errEdit
 	}
@@ -689,6 +692,10 @@ func (m *Manager) updateInternalLocked(ctx context.Context, base, auth *Auth, mo
 	refreshPatchBeforeSave := auth.CodexRefreshPatch
 	persistMetaMint := (mode == updateModePrepare || mode == updateModeRefresh) && strings.EqualFold(strings.TrimSpace(auth.Provider), "meta")
 	if errPersist := m.persistLocked(ctx, auth); errPersist != nil {
+		if requireAuthPersistenceFork(ctx) {
+			m.mu.Unlock()
+			return nil, false, false, fmt.Errorf("persist managed auth: %w", errPersist)
+		}
 		// A minted Meta key must reach the store before requests can use it.
 		if persistMetaMint {
 			m.mu.Unlock()
@@ -1002,25 +1009,25 @@ func (m *Manager) persist(ctx context.Context, auth *Auth) error {
 	store := m.store
 	m.mu.RUnlock()
 	if store == nil || auth == nil {
-		return nil
+		return skippedManagedAuthSaveFork(ctx)
 	}
 	if errWeight := ValidateAuthWeight(auth); errWeight != nil {
 		return fmt.Errorf("persist auth: %w", errWeight)
 	}
 	if IsConfigAPIKeyAuth(auth) {
-		return nil
+		return skippedManagedAuthSaveFork(ctx)
 	}
 	if auth.Attributes != nil {
 		if v := strings.ToLower(strings.TrimSpace(auth.Attributes["runtime_only"])); v == "true" {
-			return nil
+			return skippedManagedAuthSaveFork(ctx)
 		}
 	}
 	if IsPluginVirtualAuth(auth) {
-		return nil
+		return skippedManagedAuthSaveFork(ctx)
 	}
 	// Skip persistence when metadata is absent (e.g., runtime-only auths).
 	if auth.Metadata == nil {
-		return nil
+		return skippedManagedAuthSaveFork(ctx)
 	}
 
 	lockVal, _ := m.persistLocks.LoadOrStore(auth.ID, &authPersistLock{})
@@ -1029,30 +1036,28 @@ func (m *Manager) persist(ctx context.Context, auth *Auth) error {
 		pLock.mu.Lock()
 		defer pLock.mu.Unlock()
 		if auth.RegistrationEpoch < pLock.lastEpoch || (auth.RegistrationEpoch == pLock.lastEpoch && auth.Generation < pLock.lastGeneration) {
-			return nil
+			return skippedManagedAuthSaveFork(ctx)
 		}
 		pLock.lastEpoch = auth.RegistrationEpoch
 		pLock.lastGeneration = auth.Generation
 		if shouldSkipPersist(ctx) {
-			return nil
+			return skippedManagedAuthSaveFork(ctx)
 		}
 		releaseFg, errWait := m.beginForegroundStoreSave(ctx)
 		if errWait != nil {
 			return errWait
 		}
 		defer releaseFg()
-		_, err := store.Save(ctx, auth)
-		return err
+		return saveManagedAuthFork(ctx, store, auth)
 	}
 
 	if shouldSkipPersist(ctx) {
-		return nil
+		return skippedManagedAuthSaveFork(ctx)
 	}
 	releaseFg, errWait := m.beginForegroundStoreSave(ctx)
 	if errWait != nil {
 		return errWait
 	}
 	defer releaseFg()
-	_, err := store.Save(ctx, auth)
-	return err
+	return saveManagedAuthFork(ctx, store, auth)
 }

@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	vertexRegionPolicyKeyFork    = "vertex_region_failover"
+	vertexRegionPolicyKeyFork    = vertexlocations.PolicyKeyFork
 	vertexRegionCapacityMaxFork  = 32 << 10
 	vertexRegionMinCooldownFork  = time.Second
 	vertexRegionMaxRetriesFork   = 4
@@ -45,11 +45,17 @@ type vertexRegionRouteFork struct {
 	secondaryAllowed func(string, time.Time) bool
 }
 
-// This policy only accepts an explicit model-scoped location allowlist.
-// Permission from it is never evidence of current destination support.
+// Permission from either mode is never evidence of current destination support.
 func vertexRegionLocationsFork(auth *cliproxyauth.Auth, model, primary string) []string {
 	if auth == nil || !vertexRegionTextModelFork(model) {
 		return nil
+	}
+	mode, _ := vertexlocations.CredentialModeFork(auth.Metadata)
+	switch mode {
+	case vertexlocations.ModeOffFork:
+		return nil
+	case vertexlocations.ModeAutomaticFork:
+		return vertexlocations.AutomaticCandidatesFork(primary)
 	}
 	models, ok := auth.Metadata[vertexRegionPolicyKeyFork].(map[string]any)
 	if !ok {

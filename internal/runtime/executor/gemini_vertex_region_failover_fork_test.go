@@ -18,6 +18,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/vertexlocations"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
@@ -316,6 +317,11 @@ func TestVertexRegionNativeManagerBoundaryFork(t *testing.T) {
 		{"openai-chat-last-eligible", false, true, "fallback", []string{"global", "us", "eu"}},
 		{"stream-last-eligible", true, true, "fallback", []string{"global", "us", "eu"}},
 		{"catalog-intersection", false, true, "catalog-intersection", []string{"global", "eu"}},
+		{"automatic-unary-widens-only-after-opt-in", false, true, "automatic", []string{"global", "europe-west4"}},
+		{"automatic-stream-widens-only-after-opt-in", true, true, "automatic", []string{"global", "europe-west4"}},
+		{"explicit-off-overrides-legacy", false, true, "explicit-off", []string{"global"}},
+		{"automatic-no-inventory", false, true, "cold-catalog", []string{"global"}},
+		{"automatic-missing-exact-model", true, true, "unknown-catalog", []string{"global"}},
 		{"catalog-order", true, true, "catalog-order", []string{"global", "eu", "us"}},
 		{"catalog-revoked-in-flight", false, true, "catalog-revoked", []string{"global", "eu"}},
 		{"no-inventory-primary-only", false, true, "cold-catalog", []string{"global"}},
@@ -413,11 +419,15 @@ func TestVertexRegionNativeManagerBoundaryFork(t *testing.T) {
 					if location != "eu" {
 						resp.StatusCode, out = 429, mockCapacityFork
 					}
+				case "automatic":
+					if location != "europe-west4" {
+						resp.StatusCode, out = 429, mockCapacityFork
+					}
 				case "catalog-order":
 					if location != "us" {
 						resp.StatusCode, out = 429, mockCapacityFork
 					}
-				case "all", "opted-out-capacity", "cold-catalog", "unknown-catalog":
+				case "all", "opted-out-capacity", "explicit-off", "cold-catalog", "unknown-catalog":
 					resp.StatusCode, out = 429, mockCapacityFork
 					resp.Header.Set("Retry-After", "20")
 				case "generic", "capacity-then-generic":
@@ -462,7 +472,7 @@ func TestVertexRegionNativeManagerBoundaryFork(t *testing.T) {
 			m := cliproxyauth.NewManager(nil, nil, nil)
 			if test.mode == "generic-outer" {
 				m.SetRetryConfig(1, 16*time.Second, 1)
-			} else if (test.optIn && test.mode != "cold-catalog" && test.mode != "unknown-catalog") || test.mode == "generic" {
+			} else if (test.optIn && test.mode != "cold-catalog" && test.mode != "unknown-catalog" && test.mode != "explicit-off") || test.mode == "generic" {
 				m.SetRetryConfig(3, 4*time.Second, 2)
 			} else {
 				m.SetRetryConfig(0, 0, 1)
@@ -476,6 +486,8 @@ func TestVertexRegionNativeManagerBoundaryFork(t *testing.T) {
 					switch test.mode {
 					case "catalog-intersection":
 						return location == "eu" || location == "europe-west4"
+					case "automatic":
+						return location == "europe-west4"
 					case "catalog-revoked":
 						return location == "eu" || (location == "us" && !revoked)
 					default:
@@ -491,6 +503,13 @@ func TestVertexRegionNativeManagerBoundaryFork(t *testing.T) {
 				auth := &cliproxyauth.Auth{ID: t.Name() + id, Provider: "vertex", Status: cliproxyauth.StatusActive,
 					Attributes: map[string]string{"priority": strconv.Itoa(10 - j*10)},
 					Metadata:   map[string]any{"project_id": project, "location": "global", "service_account": sa},
+				}
+				if j == 0 {
+					if strings.HasPrefix(test.name, "automatic-") {
+						auth.Metadata[vertexlocations.ModeKeyFork] = vertexlocations.ModeAutomaticFork
+					} else if test.mode == "explicit-off" {
+						auth.Metadata[vertexlocations.ModeKeyFork] = vertexlocations.ModeOffFork
+					}
 				}
 				if j == 1 && (test.mode == "generic" || test.mode == "capacity-then-generic") {
 					// Native alternative auth is deliberately outside the
@@ -550,14 +569,14 @@ func TestVertexRegionNativeManagerBoundaryFork(t *testing.T) {
 				t.Fatal("native retry did not wait for the cooldown floor")
 			}
 			if test.mode == "fallback" || test.mode == "generic" || test.mode == "generic-outer" ||
-				test.mode == "catalog-intersection" || test.mode == "catalog-order" || test.mode == "catalog-revoked" {
+				test.mode == "catalog-intersection" || test.mode == "catalog-order" || test.mode == "catalog-revoked" || test.mode == "automatic" {
 				if runErr != nil || !strings.Contains(out.String(), "synthetic-output") {
 					t.Fatalf("output=%q err=%v", out.String(), runErr)
 				}
 			} else if runErr == nil {
 				t.Fatalf("expected terminal error, output=%q", out.String())
 			}
-			if (test.mode == "cold-catalog" || test.mode == "unknown-catalog") && cliproxyauth.IsRequestStopError(runErr) {
+			if (test.mode == "cold-catalog" || test.mode == "unknown-catalog" || test.mode == "explicit-off") && cliproxyauth.IsRequestStopError(runErr) {
 				t.Fatal("native primary semantics changed with no eligible secondary")
 			}
 			if test.mode == "all" {

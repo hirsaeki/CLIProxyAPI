@@ -994,6 +994,7 @@ func (h *Handler) mergeExistingAuthFileMetadata(record *coreauth.Auth) {
 	}
 
 	if len(existingMap) > 0 {
+		guardVertexFailoverReimportFork(record, existingMap)
 		coreauth.MergeExistingAuthMetadata(record, existingMap)
 	}
 }
