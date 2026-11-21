@@ -375,7 +375,7 @@ func (s *Service) registerExecutorForAuth(a *coreauth.Auth, forceReplace bool) {
 	case constant.GeminiInteractions:
 		s.registerExecutor(executor.NewGeminiInteractionsExecutor(cfg))
 	case "vertex":
-		s.registerExecutor(executor.NewGeminiVertexExecutor(cfg))
+		s.registerExecutor(executor.NewGeminiVertexExecutorWithLocationsFork(cfg, &s.vertexLocations))
 	case "aistudio":
 		if s.wsGateway != nil {
 			s.registerExecutor(executor.NewAIStudioExecutor(cfg, a.ID, s.wsGateway))
