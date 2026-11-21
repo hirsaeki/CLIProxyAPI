@@ -13,6 +13,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/home"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/homeplugins"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/pluginhost"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/vertexlocations"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/watcher"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/wsrelay"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
@@ -57,6 +58,9 @@ type Service struct {
 	// Fork-owned startup snapshot; see docs/fork-maintenance.md.
 	oauthModelAvailability     *oauthModelAvailabilitySnapshot
 	oauthModelAvailabilityPath string
+
+	// Shared first-party Vertex routing inventory is populated by Run.
+	vertexLocations vertexlocations.Inventory
 
 	// tokenProvider handles loading token-based clients.
 	tokenProvider TokenClientProvider

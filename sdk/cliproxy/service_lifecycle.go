@@ -55,6 +55,7 @@ func (s *Service) Run(ctx context.Context) error {
 	}()
 
 	s.startModelCatalogUpdaters(ctx)
+	s.startVertexLocationInventoryFork(ctx)
 
 	usage.StartDefault(ctx)
 	cfg := s.currentConfig()

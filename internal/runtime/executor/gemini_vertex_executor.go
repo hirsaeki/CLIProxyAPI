@@ -175,7 +175,8 @@ func convertToImagenRequest(payload []byte) ([]byte, error) {
 
 // GeminiVertexExecutor sends requests to Vertex AI Gemini endpoints using service account credentials.
 type GeminiVertexExecutor struct {
-	cfg *config.Config
+	cfg             *config.Config
+	vertexLocations vertexLocationEvidenceFork
 }
 
 // NewGeminiVertexExecutor creates a new Vertex AI Gemini executor instance.

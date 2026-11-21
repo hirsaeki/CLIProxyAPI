@@ -13,7 +13,9 @@ import (
 
 	"github.com/MoeForge/moego/json"
 	"github.com/MoeForge/moego/ojson"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/vertexlocations"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
@@ -36,15 +38,15 @@ var vertexRegionRouterFork = vertexRegionRouteFork{
 }
 
 type vertexRegionRouteFork struct {
-	cooldown *helps.VertexRegionCooldownFork
-	now      func() time.Time
-	wait     func(context.Context, time.Duration) error
-	delay    func(int) time.Duration
+	cooldown         *helps.VertexRegionCooldownFork
+	now              func() time.Time
+	wait             func(context.Context, time.Duration) error
+	delay            func(int) time.Duration
+	secondaryAllowed func(string, time.Time) bool
 }
 
-// This policy only accepts canonical endpoint locations and explicit model
-// support declarations. Eligibility is supplied by the operator and checked
-// against the Google locations reference, not inferred from a catalog alias.
+// This policy only accepts an explicit model-scoped location allowlist.
+// Permission from it is never evidence of current destination support.
 func vertexRegionLocationsFork(auth *cliproxyauth.Auth, model, primary string) []string {
 	if auth == nil || !vertexRegionTextModelFork(model) {
 		return nil
@@ -73,34 +75,12 @@ func vertexRegionLocationsFork(auth *cliproxyauth.Auth, model, primary string) [
 	return locations
 }
 
-// Restrict destinations to Google-documented Gemini endpoint locations. The
-// location set is not permission to route; the exact model list must opt in.
-// Model availability within this set is validated by the operator.
 func vertexRegionLocationCodeFork(location string) bool {
-	switch location {
-	case "global", "us", "eu",
-		"us-west1", "us-west4", "us-central1", "us-east1", "us-east4", "us-east5", "us-south1",
-		"northamerica-northeast1", "southamerica-east1",
-		"europe-west1", "europe-west2", "europe-west3", "europe-west4", "europe-west6", "europe-west8", "europe-west9",
-		"europe-north1", "europe-central2", "europe-southwest1",
-		"asia-south1", "asia-southeast1", "asia-east1", "asia-east2", "asia-northeast1", "asia-northeast3",
-		"australia-southeast1", "me-west1", "me-central1", "me-central2":
-		return true
-	default:
-		return false
-	}
+	return vertexlocations.KnownLocation(location)
 }
 
 func vertexRegionTextModelFork(model string) bool {
-	if !strings.HasPrefix(model, "gemini-") || strings.Contains(model, "/") {
-		return false
-	}
-	for _, class := range []string{"-image", "-tts", "-embedding", "-live", "-omni", "-audio", "-robot"} {
-		if strings.Contains(model, class) {
-			return false
-		}
-	}
-	return true
+	return vertexlocations.TextModel(model)
 }
 
 // Keep stateful APIs and less predictable translation routes out of the
@@ -315,13 +295,44 @@ type vertexRegionPrefixedBodyFork struct {
 	io.Closer
 }
 
+type vertexLocationEvidenceFork interface {
+	Supports(model, location string, now time.Time) bool
+}
+
+// NewGeminiVertexExecutorWithLocationsFork binds the service-owned inventory
+// to the ordinary Vertex executor without consulting it during auth setup.
+func NewGeminiVertexExecutorWithLocationsFork(cfg *config.Config, inventory *vertexlocations.Inventory) *GeminiVertexExecutor {
+	return &GeminiVertexExecutor{cfg: cfg, vertexLocations: inventory}
+}
+
+func verifiedVertexRegionsFork(locations []string, model string, now time.Time, evidence vertexLocationEvidenceFork) []string {
+	if len(locations) < 2 || evidence == nil {
+		return nil
+	}
+	out := []string{locations[0]}
+	for _, location := range locations[1:] {
+		if evidence.Supports(model, location, now) {
+			out = append(out, location)
+		}
+	}
+	return out
+}
+
 func (e *GeminiVertexExecutor) doVertexRegionRequestFork(client *http.Client, req *http.Request, auth *cliproxyauth.Auth, opts cliproxyexecutor.Options, project, model, primary, action string, info helps.UpstreamRequestLog) (*http.Response, bool, error) {
 	record := func(attempt *http.Request) {
 		info.URL = attempt.URL.String()
 		helps.RecordAPIRequest(req.Context(), e.cfg, info)
 	}
 	locations := vertexRegionLocationsFork(auth, model, primary)
-	if len(locations) == 0 || !vertexRegionProtocolFork(opts) || !vertexRegionRequestEligibleFork(req, project, model, primary, action) || !vertexRegionPlainTextFork(info.Body) {
+	now := time.Now()
+	// Read one immutable snapshot for the ordered plan, then recheck the
+	// latest positive evidence for each secondary admission below.
+	evidence := e.vertexLocations
+	if inventory, ok := evidence.(*vertexlocations.Inventory); ok {
+		evidence = inventory.Current(now)
+	}
+	locations = verifiedVertexRegionsFork(locations, model, now, evidence)
+	if len(locations) < 2 || !vertexRegionProtocolFork(opts) || !vertexRegionRequestEligibleFork(req, project, model, primary, action) || !vertexRegionPlainTextFork(info.Body) {
 		record(req)
 		resp, err := client.Do(req)
 		return resp, false, err
@@ -339,7 +350,11 @@ func (e *GeminiVertexExecutor) doVertexRegionRequestFork(client *http.Client, re
 		helps.RecordAPIResponseMetadata(req.Context(), e.cfg, resp.StatusCode, resp.Header.Clone())
 		helps.AppendAPIResponseChunk(req.Context(), e.cfg, raw)
 	}
-	return vertexRegionRouterFork.do(client, req, project, model, action, locations, retries, maxWait, record, recordCapacity)
+	router := vertexRegionRouterFork
+	router.secondaryAllowed = func(location string, now time.Time) bool {
+		return e.vertexLocations.Supports(model, location, now)
+	}
+	return router.do(client, req, project, model, action, locations, retries, maxWait, record, recordCapacity)
 }
 
 func vertexRegionRequestEligibleFork(req *http.Request, project, model, primary, action string) bool {
@@ -399,8 +414,12 @@ func (p vertexRegionRouteFork) do(original *http.Client, req *http.Request, proj
 		if err := ctx.Err(); err != nil {
 			return nil, false, err
 		}
+		now := p.now()
+		if location != locations[0] && p.secondaryAllowed != nil && !p.secondaryAllowed(location, now) {
+			return nil, false, nil
+		}
 		key := helps.VertexRegionKeyFork{Project: project, Model: model, Location: location}
-		finish, until, recovering := p.cooldown.Claim(key, p.now())
+		finish, until, recovering := p.cooldown.Claim(key, now)
 		if finish == nil {
 			if !until.IsZero() {
 				capacitySeen = true
@@ -440,7 +459,7 @@ func (p vertexRegionRouteFork) do(original *http.Client, req *http.Request, proj
 		}
 		_ = resp.Body.Close()
 		capacitySeen = true
-		now := p.now()
+		now = p.now()
 		delay := vertexRegionMinCooldownFork
 		if header := helps.ParseGoogleRetryAfter(resp.StatusCode, resp.Header, nil, now); header != nil {
 			delay = max(delay, *header)
@@ -459,6 +478,9 @@ func (p vertexRegionRouteFork) do(original *http.Client, req *http.Request, proj
 	earliestReady := func(now time.Time) time.Time {
 		var earliest time.Time
 		for _, location := range locations {
+			if location != locations[0] && p.secondaryAllowed != nil && !p.secondaryAllowed(location, now) {
+				continue
+			}
 			due := p.cooldown.Ready(helps.VertexRegionKeyFork{Project: project, Model: model, Location: location}, now)
 			if earliest.IsZero() || due.Before(earliest) {
 				earliest = due
