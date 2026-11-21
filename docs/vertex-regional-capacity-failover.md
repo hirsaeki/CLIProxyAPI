@@ -19,24 +19,17 @@ upstream **model ID** to an ordered list of locations, for example:
 }
 ```
 
-This fragment is illustrative, not a statement that this model is available in
-every example location. Verify each pair in the [official Vertex model and
-location tables](https://docs.cloud.google.com/gemini-enterprise-agent-platform/resources/locations)
-and only include approved data-processing jurisdictions. `global` is not a
-regional data-residency guarantee. Configure only equivalent locations for the
-same Standard PayGo model in the same project. Do not use this feature to work
-around project quotas or contractual capacity restrictions.
+The list is permission and priority, not a copy of model availability. Include
+only destinations that your data policy allows for this credential and Standard
+PayGo model. `global` is not a regional data-residency guarantee. Do not use this
+feature to work around project quotas or contractual capacity restrictions.
 
 The first entry must match the saved `location`. Accepted lists have 2–16
 distinct, lowercase official locations; the built-in endpoint set covers
 `global`, `us`, `eu` and the single-region entries in the Gemini location
 tables. Missing or invalid policy entries leave the model on its existing
-native behavior. No catalog alias or wildcard expands a list, and nothing is
-automatically enrolled. The management panel's fixed-location selector is
-unchanged. The region plugin still owns model discovery; its existing hook
-receives the configured credential location and returns candidate models, not
-per-request eligible destinations. The executor uses the explicit per-model
-policy instead of loading the plugin or making a live support probe.
+native behavior. Neither catalog entries nor aliases add new permissions.
+The management panel's fixed-location selector is unchanged.
 
 Only Gemini GenerateContent and OpenAI Chat Completions client formats are
 eligible. API keys, countTokens, Imagen and other known non-text model
@@ -46,6 +39,41 @@ cached content, explicit quota routing or
 provisioned-throughput headers, custom targets, and other unfamiliar fields
 are outside this mode. They retain existing native behavior. The payload is
 checked after CPA's existing translation and user payload configuration.
+
+## Published-location evidence
+
+When the CPA service starts, it schedules a public HTTPS GET of Google's
+[official Vertex model/location tables](https://docs.cloud.google.com/gemini-enterprise-agent-platform/resources/locations)
+in the background. Startup and generation never wait for the inventory.
+One worker per service refreshes every 30 minutes, regardless of how many
+credentials are present; executor replacements share the same snapshot.
+The fetch uses the service's outbound proxy setting, no Vertex credential,
+no generation probe, and no request-controlled URL. The optional plugin
+shares the same parser implementation and official default URL, but its
+custom URL, compatibility parser and last-good discovery cache are not
+trusted for native routing.
+
+An immutable routing snapshot is replaced only by a bounded HTTP 200 response
+with the complete first-party Gemini region section and positively marked
+exact model/destination pairs. Duplicate, missing or malformed coordinates,
+unrecognized section layout, partial responses, and an unsolicited 304 are
+not new evidence. Hard freshness is six hours from the last fully verified
+response. Repeated failed refreshes **do not** extend it.
+
+CPA keeps the configured primary even when a catalog entry is unknown. For
+secondaries, it intersects the explicit allowlist with fresh exact-model
+support, preserving order; it checks the latest evidence again before each
+secondary attempt. If no secondary qualifies at entry (including at cold
+startup or after expiry), the new router does not take over and the native
+primary path is unchanged. Existing CPA retry and configured alternate-auth
+behavior remains independent of this credential's allowlist when the native
+path owns the request. Evidence is published availability, not project IAM,
+entitlement, data residency or live capacity.
+
+Startup/refresh logs report `fresh`, `last_good`, `unavailable`, or
+`expired` and, when available, the model count, last verified time and
+freshness deadline. Expiry is enforced immediately when routing, including
+between refresh ticks.
 
 ## Request behavior
 

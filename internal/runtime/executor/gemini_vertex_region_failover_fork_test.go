@@ -30,6 +30,30 @@ const (
 	mockCapacityFork    = `{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","message":"Temporary regional capacity overload; please try again later."}}`
 )
 
+type testVertexEvidenceFork func(string, string, time.Time) bool
+
+func (f testVertexEvidenceFork) Supports(model, location string, now time.Time) bool {
+	return f(model, location, now)
+}
+
+func TestVerifiedVertexRegionsFork(t *testing.T) {
+	now := time.Unix(100, 0)
+	evidence := testVertexEvidenceFork(func(model, location string, at time.Time) bool {
+		return at.Equal(now) && model == "gemini-exact-preview" && location != "global" && location != "eu"
+	})
+	allowed := []string{"global", "eu", "europe-west4", "us"}
+	got := verifiedVertexRegionsFork(allowed, "gemini-exact-preview", now, evidence)
+	if !slices.Equal(got, []string{"global", "europe-west4", "us"}) {
+		t.Fatalf("intersection or explicit primary/order = %v", got)
+	}
+	if got := verifiedVertexRegionsFork(allowed, "gemini-exact", now, evidence); !slices.Equal(got, []string{"global"}) {
+		t.Fatalf("inferred model alias location: %v", got)
+	}
+	if got := verifiedVertexRegionsFork(allowed, "gemini-exact-preview", now.Add(time.Second), evidence); !slices.Equal(got, []string{"global"}) {
+		t.Fatalf("expired evidence authorized alternate: %v", got)
+	}
+}
+
 func TestVertexRegionClassifierAndEligibilityFork(t *testing.T) {
 	for _, test := range []struct {
 		status int
@@ -291,6 +315,11 @@ func TestVertexRegionNativeManagerBoundaryFork(t *testing.T) {
 		{"unary-last-eligible", false, true, "fallback", []string{"global", "us", "eu"}},
 		{"openai-chat-last-eligible", false, true, "fallback", []string{"global", "us", "eu"}},
 		{"stream-last-eligible", true, true, "fallback", []string{"global", "us", "eu"}},
+		{"catalog-intersection", false, true, "catalog-intersection", []string{"global", "eu"}},
+		{"catalog-order", true, true, "catalog-order", []string{"global", "eu", "us"}},
+		{"catalog-revoked-in-flight", false, true, "catalog-revoked", []string{"global", "eu"}},
+		{"no-inventory-primary-only", false, true, "cold-catalog", []string{"global"}},
+		{"unknown-model-primary-only", true, true, "unknown-catalog", []string{"global"}},
 		{"no-outer-unary-retry", false, true, "all", []string{"global", "us", "eu"}},
 		{"no-outer-stream-retry", true, true, "all", []string{"global", "us", "eu"}},
 		{"primary-generic-unary-opted-out", false, false, "generic", []string{"global", "europe-west4"}},
@@ -338,6 +367,7 @@ func TestVertexRegionNativeManagerBoundaryFork(t *testing.T) {
 			defer pipeR.Close()
 			defer pipeW.Close()
 			var attempts []string
+			var revoked bool
 			var attemptTimes []time.Time
 			var sentBody string
 			var stopped = statusErr{code: 429, msg: mockGeneric429Fork}
@@ -376,11 +406,18 @@ func TestVertexRegionNativeManagerBoundaryFork(t *testing.T) {
 				const result = `{"candidates":[{"content":{"role":"model","parts":[{"text":"synthetic-output"}]},"finishReason":"STOP"}]}`
 				out := result
 				switch test.mode {
-				case "fallback":
+				case "fallback", "catalog-intersection", "catalog-revoked":
+					if test.mode == "catalog-revoked" && location == "global" {
+						revoked = true
+					}
 					if location != "eu" {
 						resp.StatusCode, out = 429, mockCapacityFork
 					}
-				case "all", "opted-out-capacity":
+				case "catalog-order":
+					if location != "us" {
+						resp.StatusCode, out = 429, mockCapacityFork
+					}
+				case "all", "opted-out-capacity", "cold-catalog", "unknown-catalog":
 					resp.StatusCode, out = 429, mockCapacityFork
 					resp.Header.Set("Retry-After", "20")
 				case "generic", "capacity-then-generic":
@@ -425,12 +462,28 @@ func TestVertexRegionNativeManagerBoundaryFork(t *testing.T) {
 			m := cliproxyauth.NewManager(nil, nil, nil)
 			if test.mode == "generic-outer" {
 				m.SetRetryConfig(1, 16*time.Second, 1)
-			} else if test.optIn || test.mode == "generic" {
+			} else if (test.optIn && test.mode != "cold-catalog" && test.mode != "unknown-catalog") || test.mode == "generic" {
 				m.SetRetryConfig(3, 4*time.Second, 2)
 			} else {
 				m.SetRetryConfig(0, 0, 1)
 			}
-			m.RegisterExecutor(NewGeminiVertexExecutor(cfg))
+			exec := NewGeminiVertexExecutor(cfg)
+			if test.mode != "cold-catalog" {
+				exec.vertexLocations = testVertexEvidenceFork(func(model, location string, _ time.Time) bool {
+					if model != mockVertexModelFork || test.mode == "unknown-catalog" {
+						return false
+					}
+					switch test.mode {
+					case "catalog-intersection":
+						return location == "eu" || location == "europe-west4"
+					case "catalog-revoked":
+						return location == "eu" || (location == "us" && !revoked)
+					default:
+						return true
+					}
+				})
+			}
+			m.RegisterExecutor(exec)
 			for j, id := range []string{"primary", "other-auth"} {
 				if test.mode == "generic-outer" && j > 0 {
 					break
@@ -445,7 +498,11 @@ func TestVertexRegionNativeManagerBoundaryFork(t *testing.T) {
 					auth.Metadata["location"] = "europe-west4"
 				}
 				if j == 0 && test.optIn {
-					auth.Metadata[vertexRegionPolicyKeyFork] = map[string]any{mockVertexModelFork: []any{"global", "us", "eu"}}
+					locations := []any{"global", "us", "eu"}
+					if test.mode == "catalog-order" {
+						locations = []any{"global", "eu", "us"}
+					}
+					auth.Metadata[vertexRegionPolicyKeyFork] = map[string]any{mockVertexModelFork: locations}
 				}
 				if test.mode == "generic-outer" {
 					auth.Metadata["request_retry"] = 1
@@ -492,12 +549,16 @@ func TestVertexRegionNativeManagerBoundaryFork(t *testing.T) {
 			if test.mode == "generic-outer" && attemptTimes[1].Sub(attemptTimes[0]) < 9*time.Second {
 				t.Fatal("native retry did not wait for the cooldown floor")
 			}
-			if test.mode == "fallback" || test.mode == "generic" || test.mode == "generic-outer" {
+			if test.mode == "fallback" || test.mode == "generic" || test.mode == "generic-outer" ||
+				test.mode == "catalog-intersection" || test.mode == "catalog-order" || test.mode == "catalog-revoked" {
 				if runErr != nil || !strings.Contains(out.String(), "synthetic-output") {
 					t.Fatalf("output=%q err=%v", out.String(), runErr)
 				}
 			} else if runErr == nil {
 				t.Fatalf("expected terminal error, output=%q", out.String())
+			}
+			if (test.mode == "cold-catalog" || test.mode == "unknown-catalog") && cliproxyauth.IsRequestStopError(runErr) {
+				t.Fatal("native primary semantics changed with no eligible secondary")
 			}
 			if test.mode == "all" {
 				state, _ := m.GetByID(t.Name() + "primary")

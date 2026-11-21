@@ -6,10 +6,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/vertexlocations"
 	"gopkg.in/yaml.v3"
 )
 
-const defaultDocsURL = "https://docs.cloud.google.com/gemini-enterprise-agent-platform/resources/locations"
+const defaultDocsURL = vertexlocations.OfficialURL
 
 type pluginConfig struct {
 	DocsURL  string

@@ -81,6 +81,7 @@ them must stay local to the listed responsibility.
 | `sdk/cliproxy/builder.go` | Load and inject the startup availability snapshot |
 | `sdk/cliproxy/service_config.go` | Warn when a startup-only availability path changes |
 | `sdk/cliproxy/service_models.go` | Pass native candidates through the fork model-registration seam and preserve static-plugin exclusions in compatible-provider branches |
+| `sdk/cliproxy/service.go`, `service_lifecycle.go`, `service_executors.go` | Start the shared Vertex public location inventory before request serving and bind one service-owned snapshot source to each native Vertex executor (including rebinds); inventory, validation, and logging implementations remain fork-owned |
 | `internal/runtime/executor/gemini_vertex_executor.go` | Delegate the final ordinary service-account HTTP request to the opt-in [regional capacity router](vertex-regional-capacity-failover.md) while retaining native payload, auth and stream handling |
 | `sdk/cliproxy/auth/conductor_execution.go` | Respect explicit executor request-stop after recording its native result, as the stream path does, so regional routing does not stack with generic credential retry |
 | `internal/runtime/executor/claude_executor_stream.go` | Bound complete native and translated Claude SSE events through the fork-owned helper before appending, preserving failed usage on overflow and observing upstream stream usage before resetting each event |
