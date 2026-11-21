@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 
 	"github.com/MoeForge/moego/json"
@@ -55,19 +56,18 @@ func (h *Handler) findVertexFailoverFork(c *gin.Context, name, authIndex string)
 		return nil
 	}
 	name, authIndex = strings.TrimSpace(name), strings.TrimSpace(authIndex)
-	auth, _ := h.authManager.GetByID(name)
-	if !matchesAuthFileLookup(auth, name, authIndex) {
-		auth = nil
-		for _, candidate := range h.authManager.List() {
-			if !matchesAuthFileLookup(candidate, name, authIndex) {
-				continue
-			}
-			if auth != nil {
-				c.JSON(http.StatusConflict, gin.H{"error": "credential name is ambiguous; specify auth_index"})
-				return nil
-			}
-			auth = candidate
+	// A string can be one record's ID and another's filename. Resolve
+	// all matches from one manager snapshot before accepting a name.
+	var auth *coreauth.Auth
+	for _, candidate := range h.authManager.List() {
+		if !matchesAuthFileLookup(candidate, name, authIndex) {
+			continue
 		}
+		if auth != nil {
+			c.JSON(http.StatusConflict, gin.H{"error": "credential name is ambiguous; specify auth_index"})
+			return nil
+		}
+		auth = candidate
 	}
 	if auth == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "auth file not found"})
@@ -137,5 +137,23 @@ func (h *Handler) PatchVertexFailoverFork(c *gin.Context) {
 		// Manager.Modify already updates the runtime and scheduler. This setting
 		// changes neither model registration nor provider/executor identity.
 		writeVertexFailoverFork(c, updated)
+	}
+}
+
+// guardVertexFailoverReimportFork prevents an imported replacement account
+// from silently inheriting the old account's cross-region opt-in.
+func guardVertexFailoverReimportFork(record *coreauth.Auth, oldMetadata map[string]any) {
+	if record == nil || record.Provider != "vertex" || record.Metadata == nil ||
+		oldMetadata[vertexlocations.ModeKeyFork] != vertexlocations.ModeAutomaticFork {
+		return
+	}
+	if _, explicit := record.Metadata[vertexlocations.ModeKeyFork]; explicit {
+		return
+	}
+	oldAccount, oldOK := oldMetadata["service_account"].(map[string]any)
+	newAccount, newOK := record.Metadata["service_account"].(map[string]any)
+	if !oldOK || !newOK || len(oldAccount) == 0 || len(newAccount) == 0 ||
+		!reflect.DeepEqual(oldAccount, newAccount) {
+		record.Metadata[vertexlocations.ModeKeyFork] = vertexlocations.ModeOffFork
 	}
 }

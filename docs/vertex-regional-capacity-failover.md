@@ -17,7 +17,8 @@ can manage the policy through its authenticated v8 Management API:
   or `"mode":"off"` with the same revision precondition.
 
 Both accept the optional `auth_index` (query or body respectively) to verify
-the credential identity. The response contains only mode, explicitness and an
+the credential identity; it is required if the name matches multiple records.
+The response contains only mode, explicitness and an
 opaque `revision`, for example
 `{"mode":"automatic","explicit":true,"revision":"<opaque value>"}`.
 No credentials or legacy policy contents are returned. On HTTP 409, reload
@@ -27,7 +28,12 @@ Center control requires the separate UI update. Git-, object-, and
 Postgres-backed credentials are not editable through this endpoint.
 
 New settings are persisted as `vertex_region_failover_mode`, and successful
-changes take effect on subsequent requests without a restart. The fixed
+changes take effect on subsequent requests without a restart. CPA coordinates
+managed policy edits, imports, and v8 upload/delete operations. Disk checks and
+atomic replacement are not a cross-process compare-and-swap. Do not edit the
+same auth file externally at the same time or share this auth directory between
+independent CPA writers. A managed import that replaces the service-account
+material does not inherit the previous account’s automatic opt-in. The fixed
 primary location is unchanged. When neither mode nor legacy mapping is
 present, the default is OFF (`"explicit":false`). Explicit OFF overrides
 any legacy mapping. Explicit automatic mode allows **all safe built-in

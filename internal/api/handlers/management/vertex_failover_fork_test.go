@@ -192,3 +192,85 @@ func TestVertexFailoverCredentialEligibilityFork(t *testing.T) {
 		}
 	}
 }
+
+func TestVertexFailoverRejectsAmbiguousCredentialNameFork(t *testing.T) {
+	dir := t.TempDir()
+	store := fileauth.NewFileTokenStore()
+	store.SetBaseDir(dir)
+	manager := coreauth.NewManager(store, nil, nil)
+	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: dir}, manager)
+	for _, fixture := range []struct{ id, index, mode string }{
+		{"shared.json", "root-index", "off"},
+		{"nested/shared.json", "nested-index", "automatic"},
+	} {
+		path := filepath.Join(dir, fixture.id)
+		record := &coreauth.Auth{
+			ID: fixture.id, Index: fixture.index, FileName: "shared.json", Provider: "vertex",
+			Attributes: map[string]string{coreauth.AttributePath: path},
+			Metadata: map[string]any{
+				"type": "vertex", "location": "us", "project_id": fixture.index,
+				"service_account":           map[string]any{"project_id": fixture.index},
+				vertexlocations.ModeKeyFork: fixture.mode,
+			},
+		}
+		if _, err := manager.Register(context.Background(), record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	request := func(method, url, body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(method, url, strings.NewReader(body))
+		if method == http.MethodGet {
+			h.GetVertexFailoverFork(c)
+		} else {
+			h.PatchVertexFailoverFork(c)
+		}
+		return rec
+	}
+	const route = "/v8/management/credentials/vertex-failover"
+	if rec := request(http.MethodGet, route+"?name=shared.json", ""); rec.Code != http.StatusConflict {
+		t.Fatalf("unqualified ambiguous GET = %d, want conflict", rec.Code)
+	}
+	var revision string
+	for index, mode := range map[string]string{"root-index": "off", "nested-index": "automatic"} {
+		rec := request(http.MethodGet, route+"?name=shared.json&auth_index="+index, "")
+		var policy struct {
+			Mode     string
+			Revision string
+		}
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &policy) != nil || policy.Mode != mode || policy.Revision == "" {
+			t.Fatalf("indexed GET for %s = %d: %s", index, rec.Code, rec.Body.String())
+		}
+		if index == "root-index" {
+			revision = policy.Revision
+		}
+	}
+	if rec := request(http.MethodPatch, route, `{"name":"shared.json","mode":"automatic","revision":"`+revision+`"}`); rec.Code != http.StatusConflict {
+		t.Fatalf("unqualified ambiguous PATCH = %d, want conflict", rec.Code)
+	}
+}
+
+func TestVertexFailoverReimportDoesNotInheritAutomaticFork(t *testing.T) {
+	existing := map[string]any{
+		"service_account":             map[string]any{"client_email": "first@example.test"},
+		vertexlocations.ModeKeyFork:   vertexlocations.ModeAutomaticFork,
+		vertexlocations.PolicyKeyFork: map[string]any{"gemini-test": []any{"us", "eu"}},
+	}
+	for _, tc := range []struct{ email, mode string }{
+		{"first@example.test", "automatic"},
+		{"other@example.test", "off"},
+	} {
+		record := &coreauth.Auth{Provider: "vertex", Metadata: map[string]any{
+			"service_account": map[string]any{"client_email": tc.email},
+		}}
+		guardVertexFailoverReimportFork(record, existing)
+		coreauth.MergeExistingAuthMetadata(record, existing)
+		if mode, explicit := vertexlocations.CredentialModeFork(record.Metadata); mode != tc.mode || !explicit {
+			t.Fatalf("reimport for %s retained wrong mode %s (explicit %v)", tc.email, mode, explicit)
+		}
+		if !reflect.DeepEqual(record.Metadata[vertexlocations.PolicyKeyFork], existing[vertexlocations.PolicyKeyFork]) {
+			t.Fatal("reimport unnecessarily removed the legacy policy")
+		}
+	}
+}
