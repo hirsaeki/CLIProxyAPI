@@ -11,9 +11,10 @@ import (
 const (
 	// OfficialURL is the public locations matrix consumed by both the native
 	// routing inventory and the optional region model-discovery plugin.
-	OfficialURL        = "https://docs.cloud.google.com/gemini-enterprise-agent-platform/resources/locations"
-	googleSectionFork  = "Google model endpoint locations"
-	partnerSectionFork = "Google Cloud partner model endpoint locations"
+	OfficialURL         = "https://docs.cloud.google.com/gemini-enterprise-agent-platform/resources/locations"
+	googleSectionFork   = "Google model endpoint locations"
+	partnerSectionFork  = "Google Cloud partner model endpoint locations"
+	middleEastGroupFork = 6 // Index in regionGroupsFork.
 )
 
 var regionGroupsFork = [][]string{
@@ -187,6 +188,7 @@ func verifiedTableFork(table *html.Node) ([]string, map[string][]bool, error) {
 	}
 	models := make(map[string][]bool)
 	var inGemini, sawGemini bool
+	allTextSupportCellsBlank := true
 	for _, row := range rows {
 		cells := directChildren(row, "td")
 		if len(cells) == 1 && hasClass(cells[0], "vertex-ai-table-heading") {
@@ -224,6 +226,7 @@ func verifiedTableFork(table *html.Node) ([]string, map[string][]bool, error) {
 		previous := models[model]
 		for col, cell := range cells[1:] {
 			// Never infer support from a blank cell, a link or a similar ID.
+			allTextSupportCellsBlank = allTextSupportCellsBlank && blankSupportCellFork(cell)
 			supported, conflict := supportCellFork(cell)
 			if conflict {
 				return nil, nil, fmt.Errorf("Gemini inventory cell has conflicting support markers")
@@ -241,7 +244,10 @@ func verifiedTableFork(table *html.Node) ([]string, map[string][]bool, error) {
 			positive = positive || supported
 		}
 	}
-	if !positive {
+	// The official Middle East grid can contain only empty text-model
+	// cells. It contributes no evidence, while all other groups must still
+	// include an explicit positive. Nonempty unknown markup fails closed.
+	if !positive && !(allTextSupportCellsBlank && locationGroupFork(locations) == middleEastGroupFork) {
 		return nil, nil, fmt.Errorf("Gemini inventory table has no positive support markers")
 	}
 	return locations, models, nil
@@ -319,6 +325,10 @@ func supportCellFork(cell *html.Node) (supported, conflict bool) {
 		return true
 	})
 	return positive == 1 && other == 0, positive > 1 || positive == 1 && other > 0
+}
+
+func blankSupportCellFork(cell *html.Node) bool {
+	return len(cell.Attr) == 0 && elementCountFork(cell) == 0 && strings.TrimSpace(nodeText(cell)) == ""
 }
 
 func hasSpanFork(cell *html.Node) bool {

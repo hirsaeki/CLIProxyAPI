@@ -81,6 +81,45 @@ func TestFirstPartyMatrixVerificationFork(t *testing.T) {
 	}
 }
 
+func TestFirstPartyMatrixAllowsOnlyObservedEmptyGroupFork(t *testing.T) {
+	page := fixtureFork(map[string][]string{"gemini-example": {"global", "us", "eu"}})
+	start := strings.LastIndex(page, "<table>")
+	empty := strings.ReplaceAll(page[start:], markerFork, "<td></td>")
+	emptyPage := page[:start] + empty
+	models, err := parseVerifiedMatrix(strings.NewReader(emptyPage))
+	if err != nil || !models["gemini-example"]["global"] || !models["gemini-example"]["us"] ||
+		!models["gemini-example"]["eu"] || models["gemini-anchor"]["me-west1"] ||
+		models["gemini-anchor"]["me-central1"] || models["gemini-anchor"]["me-central2"] {
+		t.Fatalf("blank Middle East cells must contribute no positive evidence: %v", err)
+	}
+	now := time.Unix(1_000_000, 0)
+	var inventory Inventory
+	refresh := func(data string) {
+		inventory.refresh(context.Background(), func(context.Context) ([]byte, error) { return []byte(data), nil },
+			func() time.Time { return now }, nil)
+	}
+	refresh(page)
+	if !inventory.Supports("gemini-anchor", "me-west1", now) {
+		t.Fatal("fixture must initially publish Middle East support")
+	}
+	refresh(emptyPage)
+	if inventory.Supports("gemini-anchor", "me-west1", now) || !inventory.Supports("gemini-example", "eu", now) {
+		t.Fatal("complete blank grid must revoke prior support without losing other groups")
+	}
+	for name, malformed := range map[string]string{
+		"nonempty-unknown-middle-east": page[:start] + strings.Replace(empty, "<td></td>", "<td><span class=changed></span></td>", 1),
+		"marked-middle-east":           page[:start] + strings.Replace(empty, "<td></td>", "<td aria-label=Unknown></td>", 1),
+		"missing-cell-middle-east":     page[:start] + strings.Replace(empty, "<td></td>", "", 1),
+		"all-groups-empty":             strings.ReplaceAll(page, markerFork, "<td></td>"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := parseVerifiedMatrix(strings.NewReader(malformed)); err == nil {
+				t.Fatal("accepted structurally unverified evidence")
+			}
+		})
+	}
+}
+
 func TestInventoryHardFreshnessAndReplacementFork(t *testing.T) {
 	now := time.Unix(1_000_000, 0)
 	clock := func() time.Time { return now }
