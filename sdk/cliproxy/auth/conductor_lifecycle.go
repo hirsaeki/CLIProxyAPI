@@ -333,6 +333,9 @@ func (m *Manager) Modify(ctx context.Context, id string, expectedEpoch uint64, e
 	if expectedEpoch != 0 && expectedEpoch < currentEpoch {
 		return nil, false, fmt.Errorf("update auth %s: stale registration epoch %d < %d", id, expectedEpoch, currentEpoch)
 	}
+	if requireAuthPersistenceFork(ctx) {
+		ctx = context.WithValue(ctx, authPersistenceOriginalKeyFork{}, current.Clone().Metadata)
+	}
 	if errEdit := edit(current); errEdit != nil {
 		return nil, false, errEdit
 	}

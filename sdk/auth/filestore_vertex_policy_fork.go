@@ -56,9 +56,15 @@ func patchManagedVertexModeFork(ctx context.Context, path string, auth *cliproxy
 	if modeFields > 1 {
 		return "", invalid
 	}
-	for _, key := range []string{"service_account", "location", "project_id", "project", "access_token", "api_key"} {
-		if !reflect.DeepEqual(disk[key], auth.Metadata[key]) {
-			return "", invalid
+	before := cliproxyauth.ManagedFileAuthOriginalMetadataFork(ctx)
+	if before == nil {
+		return "", invalid
+	}
+	for _, key := range []string{"service_account", "location", "project_id", "project", "access_token", "api_key", vertexlocations.ModeKeyFork, vertexlocations.PolicyKeyFork} {
+		onDisk, diskPresent := disk[key]
+		originalValue, originallyPresent := before[key]
+		if diskPresent != originallyPresent || !reflect.DeepEqual(onDisk, originalValue) {
+			return "", cliproxyauth.ErrManagedFileAuthRevisionFork
 		}
 	}
 	doc := ojson.NewDoc(original)
@@ -88,11 +94,11 @@ func patchManagedVertexModeFork(ctx context.Context, path string, auth *cliproxy
 	// Reject an external rename or edit before publishing the replacement.
 	current, err := os.Lstat(path)
 	if err != nil || !os.SameFile(info, current) || info.Mode() != current.Mode() {
-		return "", invalid
+		return "", cliproxyauth.ErrManagedFileAuthRevisionFork
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil || !bytes.Equal(raw, original) {
-		return "", invalid
+		return "", cliproxyauth.ErrManagedFileAuthRevisionFork
 	}
 	if err = os.Rename(name, path); err != nil {
 		return "", err

@@ -6,6 +6,17 @@ import (
 )
 
 type authPersistenceKeyFork struct{}
+type authPersistenceOriginalKeyFork struct{}
+
+// ErrManagedFileAuthRevisionFork identifies a stale managed file policy update.
+var ErrManagedFileAuthRevisionFork = errors.New("managed auth revision changed")
+
+// ManagedFileAuthOriginalMetadataFork reads the before-image captured under the
+// manager's mutation gate. Stores may only read this snapshot.
+func ManagedFileAuthOriginalMetadataFork(ctx context.Context) map[string]any {
+	metadata, _ := ctx.Value(authPersistenceOriginalKeyFork{}).(map[string]any)
+	return metadata
+}
 
 // managedFileAuthStoreFork identifies stores with a local atomic policy write;
 // mirrored stores can fail after updating their watcher-visible local copy.

@@ -28,7 +28,7 @@ func TestVertexFailoverManagementAccessFork(t *testing.T) {
 			{"/v0/management", "synthetic-management-password", http.StatusNotFound},
 		} {
 			path := tc.prefix + "/credentials/vertex-failover?name=vertex-fake.json"
-			req := httptest.NewRequest(method, path, strings.NewReader(`{"name":"vertex-fake.json","mode":"off"}`))
+			req := httptest.NewRequest(method, path, strings.NewReader(`{"name":"vertex-fake.json","mode":"off","revision":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}`))
 			if tc.key != "" {
 				req.Header.Set("Authorization", "Bearer "+tc.key)
 			}

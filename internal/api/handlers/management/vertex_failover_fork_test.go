@@ -51,7 +51,7 @@ func TestVertexFailoverCredentialPersistenceFork(t *testing.T) {
 	if _, err := manager.Register(ctx, record); err != nil {
 		t.Fatal(err)
 	}
-	call := func(m *coreauth.Manager, method, query, raw string, status int, mode string, explicit bool) {
+	call := func(m *coreauth.Manager, method, query, raw string, status int, mode string, explicit bool) string {
 		t.Helper()
 		h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: dir}, m)
 		rec := httptest.NewRecorder()
@@ -67,14 +67,23 @@ func TestVertexFailoverCredentialPersistenceFork(t *testing.T) {
 		}
 		if status == 200 {
 			var body map[string]any
-			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || !reflect.DeepEqual(body, map[string]any{"mode": mode, "explicit": explicit}) {
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("invalid response %s", rec.Body.String())
+			}
+			revision, _ := body["revision"].(string)
+			if len(body) != 3 || body["mode"] != mode || body["explicit"] != explicit ||
+				!validVertexFailoverRevisionFork(revision) || rec.Header().Get("Cache-Control") != "no-store" {
 				t.Fatalf("non-minimal or incorrect response %s", rec.Body.String())
 			}
+			return revision
 		}
+		return ""
 	}
+
 	query := "?name=" + testVertexFailoverCredentialFork
+	var revision string
 	patch := func(mode string) string {
-		return `{"name":"` + testVertexFailoverCredentialFork + `","mode":"` + mode + `"}`
+		return `{"name":"` + testVertexFailoverCredentialFork + `","mode":"` + mode + `","revision":"` + revision + `"}`
 	}
 	path := filepath.Join(dir, testVertexFailoverCredentialFork)
 	// An unrelated on-disk edit may exist before the watcher has caught up.
@@ -87,13 +96,18 @@ func TestVertexFailoverCredentialPersistenceFork(t *testing.T) {
 	if err = os.WriteFile(path, raw, 0600); err != nil {
 		t.Fatal(err)
 	}
-	call(manager, http.MethodGet, query, "", 200, "legacy", false)
+	revision = call(manager, http.MethodGet, query, "", 200, "legacy", false)
 	call(manager, http.MethodGet, query+"&auth_index=wrong", "", 404, "", false)
 	call(manager, http.MethodPatch, "", patch("legacy"), 400, "", false)
+	call(manager, http.MethodPatch, "", `{"name":"`+testVertexFailoverCredentialFork+`","mode":"automatic"}`, 400, "", false)
 	call(manager, http.MethodPatch, "", strings.TrimSuffix(patch("automatic"), "}")+`,"location":"eu"}`, 400, "", false)
 	for _, mode := range []string{"automatic", "off"} {
-		call(manager, http.MethodPatch, "", patch(mode), 200, mode, true)
-		call(manager, http.MethodGet, query, "", 200, mode, true)
+		stalePatch := patch("off")
+		revision = call(manager, http.MethodPatch, "", patch(mode), 200, mode, true)
+		call(manager, http.MethodPatch, "", stalePatch, 409, "", false)
+		if got := call(manager, http.MethodGet, query, "", 200, mode, true); got != revision {
+			t.Fatal("successful PATCH and following GET disagree on revision")
+		}
 		raw, errRead := os.ReadFile(path)
 		var saved map[string]any
 		if errRead != nil || json.Unmarshal(raw, &saved) != nil ||
@@ -116,6 +130,38 @@ func TestVertexFailoverCredentialPersistenceFork(t *testing.T) {
 		call(manager, http.MethodGet, query, "", 200, mode, true)
 		store.fail = false
 	}
+	// A different service account can be reuploaded under the same name/index.
+	stale := patch("automatic")
+	before, _ := manager.GetByID(testVertexFailoverCredentialFork)
+	replacement := before.Clone()
+	replacement.Metadata = map[string]any{"type": "vertex", "location": "global", "project_id": "replacement",
+		"service_account":           map[string]any{"private_key": "synthetic-replacement", "project_id": "replacement"},
+		vertexlocations.ModeKeyFork: "off"}
+	replacement.Storage = nil
+	if _, err := manager.Register(ctx, replacement); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := manager.GetByID(testVertexFailoverCredentialFork)
+	if lockedAuthIndex(after) != lockedAuthIndex(before) {
+		t.Fatal("fixture must preserve auth index across replacement")
+	}
+	call(manager, http.MethodPatch, "", stale, 409, "", false)
+	revision = call(manager, http.MethodGet, query, "", 200, "off", true)
+
+	// Reject an on-disk policy revision that the watcher has not adopted yet.
+	raw, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleDisk := strings.Replace(string(raw), `"vertex_region_failover_mode":"off"`, `"vertex_region_failover_mode":"automatic"`, 1)
+	if staleDisk == string(raw) {
+		t.Fatal("fixture did not change the on-disk policy")
+	}
+	if err = os.WriteFile(path, []byte(staleDisk), 0600); err != nil {
+		t.Fatal(err)
+	}
+	call(manager, http.MethodPatch, "", patch("off"), 409, "", false)
+	call(manager, http.MethodGet, query, "", 200, "off", true)
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}

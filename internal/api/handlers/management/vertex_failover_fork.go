@@ -1,6 +1,7 @@
 package management
 
 import (
+	"crypto/hmac"
 	"errors"
 	"io"
 	"net/http"
@@ -35,7 +36,13 @@ func vertexFailoverHasAccessTokenFork(auth *coreauth.Auth) bool {
 
 func writeVertexFailoverFork(c *gin.Context, auth *coreauth.Auth) {
 	mode, explicit := vertexlocations.CredentialModeFork(auth.Metadata)
-	c.JSON(http.StatusOK, gin.H{"mode": mode, "explicit": explicit})
+	revision, err := vertexFailoverRevisionFork(auth)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read Vertex failover revision"})
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	c.JSON(http.StatusOK, gin.H{"mode": mode, "explicit": explicit, "revision": revision})
 }
 
 func (h *Handler) findVertexFailoverFork(c *gin.Context, name, authIndex string) *coreauth.Auth {
@@ -84,11 +91,13 @@ func (h *Handler) PatchVertexFailoverFork(c *gin.Context) {
 		Name      string `json:"name"`
 		AuthIndex string `json:"auth_index"`
 		Mode      string `json:"mode"`
+		Revision  string `json:"revision"`
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(c.Writer, c.Request.Body, 4096))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&patch); err != nil || decoder.Decode(new(any)) != io.EOF ||
-		(patch.Mode != vertexlocations.ModeOffFork && patch.Mode != vertexlocations.ModeAutomaticFork) {
+		(patch.Mode != vertexlocations.ModeOffFork && patch.Mode != vertexlocations.ModeAutomaticFork) ||
+		!validVertexFailoverRevisionFork(patch.Revision) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid Vertex failover mode request"})
 		return
 	}
@@ -101,14 +110,23 @@ func (h *Handler) PatchVertexFailoverFork(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
-	updated, committed, err := h.authManager.ModifyPersistedFork(ctx, target.ID, target.RegistrationEpoch, func(current *coreauth.Auth) error {
+	updated, committed, err := h.authManager.ModifyPersistedFork(ctx, target.ID, 0, func(current *coreauth.Auth) error {
 		if !matchesAuthFileLookup(current, strings.TrimSpace(patch.Name), strings.TrimSpace(patch.AuthIndex)) || !vertexFailoverEligibleFork(current) {
 			return errVertexFailoverCredentialFork
+		}
+		revision, errRevision := vertexFailoverRevisionFork(current)
+		if errRevision != nil {
+			return errRevision
+		}
+		if !hmac.Equal([]byte(revision), []byte(patch.Revision)) {
+			return coreauth.ErrManagedFileAuthRevisionFork
 		}
 		current.Metadata[vertexlocations.ModeKeyFork] = patch.Mode
 		return nil
 	})
 	switch {
+	case errors.Is(err, coreauth.ErrManagedFileAuthRevisionFork):
+		c.JSON(http.StatusConflict, gin.H{"error": "Vertex credential or policy changed; read the current revision before retrying"})
 	case errors.Is(err, errVertexFailoverCredentialFork):
 		c.JSON(http.StatusConflict, gin.H{"error": errVertexFailoverCredentialFork.Error()})
 	case err != nil:

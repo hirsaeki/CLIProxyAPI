@@ -13,12 +13,16 @@ can manage the policy through its authenticated v8 Management API:
 
 - `GET /v8/management/credentials/vertex-failover?name=vertex-example.json`
 - `PATCH /v8/management/credentials/vertex-failover` with
-  `{"name":"vertex-example.json","mode":"automatic"}` or `"mode":"off"`.
+  `{"name":"vertex-example.json","mode":"automatic","revision":"<revision from GET>"}`
+  or `"mode":"off"` with the same revision precondition.
 
 Both accept the optional `auth_index` (query or body respectively) to verify
-the credential identity. The response only contains mode and explicitness,
-for example `{"mode":"automatic","explicit":true}`; no credentials or legacy
-policy contents are returned. Older CPA builds lack this route. A Management
+the credential identity. The response contains only mode, explicitness and an
+opaque `revision`, for example
+`{"mode":"automatic","explicit":true,"revision":"<opaque value>"}`.
+No credentials or legacy policy contents are returned. On HTTP 409, reload
+the current policy before offering to confirm again. Restarting the backend
+invalidates outstanding revisions. Older CPA builds lack this route. A Management
 Center control requires the separate UI update. Git-, object-, and
 Postgres-backed credentials are not editable through this endpoint.
 
@@ -37,7 +41,7 @@ other regions may process requests.
 ### Legacy restricted policy
 
 Without an explicit mode, existing per-model lists continue unchanged, and
-the API reports `{"mode":"legacy","explicit":false}`. Changing mode never
+the API reports `mode: "legacy"` and `explicit: false`. Changing mode never
 deletes the stored list. The legacy mapping in the existing credential JSON
 is a top-level map from exact upstream **model ID** to an ordered list:
 
