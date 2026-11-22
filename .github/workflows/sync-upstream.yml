@@ -193,13 +193,6 @@ jobs:
           fi
 
           echo "Latest upstream release tag: $latest_upstream_tag"
-          # Temporary release hold: keep syncing source, but do not publish
-          # this release or a later stable tag until the hold is removed.
-          release_hold_from=v8.1.0
-          if [ "$(printf '%s\n' "$release_hold_from" "$latest_upstream_tag" | sort -V | head -n 1)" = "$release_hold_from" ]; then
-            echo "Stable publication on hold: $latest_upstream_tag (at or after $release_hold_from); source sync complete."
-            exit 0
-          fi
           tag_created=false
           if git ls-remote --exit-code --tags origin "refs/tags/${latest_upstream_tag}" >/dev/null 2>&1; then
             echo "Fork already has ${latest_upstream_tag}."
