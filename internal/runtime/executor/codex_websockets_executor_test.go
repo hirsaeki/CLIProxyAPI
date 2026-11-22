@@ -793,6 +793,100 @@ func TestCodexWebsocketsExecuteStreamPropagatesUpstreamErrorForDownstreamWebsock
 	}
 }
 
+func TestCodexWebsocketsActiveTerminal429SingleDownstreamOwnerFork(t *testing.T) {
+	for _, tc := range []struct {
+		name, terminal string
+		downstreamWS   bool
+	}{
+		{"error-event-websocket", `{"type":"error","status":429,"error":{"type":"usage_limit_reached","message":"quota exhausted"}}`, true},
+		{"failed-event-websocket", `{"type":"response.failed","response":{"error":{"type":"usage_limit_reached","message":"quota exhausted"}}}`, true},
+		{"error-event-sse", `{"type":"error","status":429,"error":{"type":"usage_limit_reached","message":"quota exhausted"}}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			upgrader := websocket.Upgrader{}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				conn, errUpgrade := upgrader.Upgrade(w, r, nil)
+				if errUpgrade != nil {
+					t.Errorf("upgrade websocket: %v", errUpgrade)
+					return
+				}
+				defer func() { _ = conn.Close() }()
+				if _, _, errRead := conn.ReadMessage(); errRead != nil {
+					t.Errorf("read response.create: %v", errRead)
+					return
+				}
+				if errWrite := conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.created","response":{"id":"resp-test","status":"in_progress"}}`)); errWrite != nil {
+					t.Errorf("write response.created: %v", errWrite)
+					return
+				}
+				if errWrite := conn.WriteMessage(websocket.TextMessage, []byte(tc.terminal)); errWrite != nil {
+					t.Errorf("write terminal event: %v", errWrite)
+					return
+				}
+				// Leave teardown to the executor, not an unrelated TCP EOF.
+				_, _, _ = conn.ReadMessage()
+			}))
+			defer server.Close()
+
+			const sessionID = "active-terminal-429"
+			exec := NewCodexWebsocketsExecutor(&config.Config{
+				SDKConfig: config.SDKConfig{DisableImageGeneration: config.DisableImageGenerationAll},
+				Codex:     config.CodexConfig{StreamBootstrapBuffering: false},
+			})
+			exec.store = &codexWebsocketSessionStore{sessions: make(map[string]*codexWebsocketSession)}
+			defer exec.CloseExecutionSession(sessionID)
+			disconnect := exec.UpstreamDisconnectChan(sessionID)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if tc.downstreamWS {
+				ctx = cliproxyexecutor.WithDownstreamWebsocket(ctx)
+			}
+			auth := &cliproxyauth.Auth{ID: "auth-a", Provider: "codex", Attributes: map[string]string{"api_key": "sk-test", "base_url": server.URL}}
+			req := cliproxyexecutor.Request{Model: "gpt-5-codex", Payload: []byte(`{"model":"gpt-5-codex","input":[{"type":"message","role":"user","content":"hello"}]}`)}
+			opts := cliproxyexecutor.Options{
+				SourceFormat:   sdktranslator.FormatOpenAIResponse,
+				ResponseFormat: sdktranslator.FormatOpenAIResponse,
+				Metadata:       map[string]any{cliproxyexecutor.ExecutionSessionMetadataKey: sessionID},
+			}
+			res, err := exec.ExecuteStream(ctx, auth, req, opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var sawCreated bool
+			var terminal error
+			for chunk := range res.Chunks {
+				if chunk.Err != nil {
+					if terminal != nil {
+						t.Fatalf("duplicate terminal stream errors: %v and %v", terminal, chunk.Err)
+					}
+					terminal = chunk.Err
+				} else if bytes.Contains(chunk.Payload, []byte("response.created")) {
+					if terminal != nil {
+						t.Fatal("response.created followed the terminal error")
+					}
+					sawCreated = true
+				}
+			}
+			var status interface{ StatusCode() int }
+			if !sawCreated || !errors.As(terminal, &status) || status.StatusCode() != http.StatusTooManyRequests {
+				t.Fatalf("created=%t terminal=%v, want a created event followed by a 429", sawCreated, terminal)
+			}
+			// The producer closes Chunks after it has made the disconnect decision.
+			// Reading the signal now is deterministic and does not need a sleep.
+			select {
+			case err, ok := <-disconnect:
+				if tc.downstreamWS || !ok || !errors.As(err, &status) || status.StatusCode() != http.StatusTooManyRequests {
+					t.Fatalf("unexpected parallel disconnect signal: %v (open=%t)", err, ok)
+				}
+			default:
+				if !tc.downstreamWS {
+					t.Fatal("non-WebSocket subscriber lost the disconnect notification")
+				}
+			}
+		})
+	}
+}
+
 func TestSendTerminalWebsocketReadInvalidatesBeforeWaitingForCapacity(t *testing.T) {
 	terminalErr := &websocket.CloseError{Code: websocket.CloseMessageTooBig}
 
