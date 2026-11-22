@@ -90,6 +90,7 @@ func cloneStaticModelsCatalog(data *staticModelsJSON) *staticModelsJSON {
 		return nil
 	}
 	return &staticModelsJSON{
+		Copilot:     cloneModelInfos(data.Copilot),
 		Claude:      cloneModelInfos(data.Claude),
 		Gemini:      cloneModelInfos(data.Gemini),
 		Vertex:      cloneModelInfos(data.Vertex),
