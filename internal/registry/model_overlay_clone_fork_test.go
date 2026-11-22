@@ -6,8 +6,12 @@ import (
 	"testing"
 )
 
-func TestCloneStaticModelsCatalogPreservesDevinAndMeta(t *testing.T) {
+func TestCloneStaticModelsCatalogPreservesCopilotDevinAndMeta(t *testing.T) {
 	base := testModelsCatalog()
+	base.Copilot = []*ModelInfo{{
+		ID: "copilot-original", DisplayName: "Copilot original", SupportedParameters: []string{"temperature"},
+		Thinking: &ThinkingSupport{Levels: []string{"high"}},
+	}}
 	base.Devin = []*ModelInfo{{
 		ID:                  "devin-original",
 		DisplayName:         "Devin original",
@@ -23,13 +27,14 @@ func TestCloneStaticModelsCatalogPreservesDevinAndMeta(t *testing.T) {
 
 	cloned := cloneStaticModelsCatalog(&base)
 	if !reflect.DeepEqual(cloned, &base) {
-		t.Fatalf("cloned catalog lost sections: Devin = %+v, Meta = %+v", cloned.Devin, cloned.Meta)
+		t.Fatalf("cloned catalog lost sections: Copilot = %+v, Devin = %+v, Meta = %+v", cloned.Copilot, cloned.Devin, cloned.Meta)
 	}
 	for _, section := range []struct {
 		name     string
 		original []*ModelInfo
 		cloned   []*ModelInfo
 	}{
+		{name: "copilot", original: base.Copilot, cloned: cloned.Copilot},
 		{name: "devin", original: base.Devin, cloned: cloned.Devin},
 		{name: "meta", original: base.Meta, cloned: cloned.Meta},
 	} {
@@ -61,16 +66,18 @@ func TestPublishCatalogWithLocalOverlayPreservesUpdatedDevinAndMeta(t *testing.T
 	}))
 
 	initial := testModelsCatalog()
+	initial.Copilot = []*ModelInfo{{ID: "copilot-old"}}
 	initial.Devin = []*ModelInfo{{ID: "devin-old"}}
 	initial.Meta = []*ModelInfo{{ID: "meta-old"}}
 	if err := loadModelsFromBytes(mustMarshalCatalog(t, initial), "initial"); err != nil {
 		t.Fatalf("load initial catalog: %v", err)
 	}
-	if got := getModels(); !reflect.DeepEqual(got.Devin, initial.Devin) || !reflect.DeepEqual(got.Meta, initial.Meta) {
-		t.Fatalf("initial overlay dropped unrelated sections: Devin = %+v, Meta = %+v", got.Devin, got.Meta)
+	if got := getModels(); !reflect.DeepEqual(got.Copilot, initial.Copilot) || !reflect.DeepEqual(got.Devin, initial.Devin) || !reflect.DeepEqual(got.Meta, initial.Meta) {
+		t.Fatalf("initial overlay dropped unrelated sections: Copilot = %+v, Devin = %+v, Meta = %+v", got.Copilot, got.Devin, got.Meta)
 	}
 
 	updated := testModelsCatalog()
+	updated.Copilot = []*ModelInfo{{ID: "copilot-new"}}
 	updated.Devin = []*ModelInfo{{ID: "devin-new", Thinking: &ThinkingSupport{Levels: []string{"high"}}}}
 	updated.Meta = []*ModelInfo{{ID: "meta-new", SupportedParameters: []string{"temperature"}}}
 	changed, err := publishCatalogBytes(mustMarshalCatalog(t, updated))
@@ -81,10 +88,10 @@ func TestPublishCatalogWithLocalOverlayPreservesUpdatedDevinAndMeta(t *testing.T
 	if lookupModelByID(got.Gemini, "gemini-local-overlay") == nil {
 		t.Fatal("published catalog lost the local Gemini overlay")
 	}
-	if !reflect.DeepEqual(got.Devin, updated.Devin) || !reflect.DeepEqual(got.Meta, updated.Meta) {
-		t.Fatalf("overlay discarded updated unrelated sections: Devin = %+v, Meta = %+v", got.Devin, got.Meta)
+	if !reflect.DeepEqual(got.Copilot, updated.Copilot) || !reflect.DeepEqual(got.Devin, updated.Devin) || !reflect.DeepEqual(got.Meta, updated.Meta) {
+		t.Fatalf("overlay discarded updated unrelated sections: Copilot = %+v, Devin = %+v, Meta = %+v", got.Copilot, got.Devin, got.Meta)
 	}
-	if !slices.Contains(changed, "devin") || !slices.Contains(changed, "meta") {
+	if !slices.Contains(changed, "copilot") || !slices.Contains(changed, "devin") || !slices.Contains(changed, "meta") {
 		t.Fatalf("updated unrelated sections were not detected: %v", changed)
 	}
 }
