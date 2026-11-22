@@ -151,9 +151,15 @@ and location. A short overlapping response cannot replace a longer
 can run after a cooldown expires. This is not a durable, cross-instance
 limit. Exhaustion returns 429 without changing generic auth/model quota
 state, and a retry hint reflects the earliest approved location's cooldown.
-CPA's existing request logs identify the attempted host, ordered by attempt,
-and debug logs mark regional-capacity cooldowns. Normal provider logging and
-request cancellation rules still apply.
+Default service logs show `vertex regional HTTP attempt` for actual sends
+during failover, with region, phase (1 = sweep; 2 = retry), attempt number and
+HTTP status (0 = transport error). `vertex regional candidate skipped` is
+not a send. `vertex regional routing finished` summarizes recovery,
+exhaustion, native handoff for an ambiguous generic 429, or why there was no
+regional attempt (for example, `policy_off`, `inventory_unavailable` or
+`no_verified_secondary`). These messages use the normal request ID when
+available and do not require debug or request-body logging. A normal primary
+success emits none of these diagnostics.
 
 [Google's 429 guidance](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/deploy/error-code-429)
 describes shared capacity as well as fixed quota and acceleration 429s. The

@@ -43,6 +43,7 @@ type vertexRegionRouteFork struct {
 	wait             func(context.Context, time.Duration) error
 	delay            func(int) time.Duration
 	secondaryAllowed func(string, time.Time) bool
+	trace            *vertexRegionTraceFork
 }
 
 // Permission from either mode is never evidence of current destination support.
@@ -330,17 +331,44 @@ func (e *GeminiVertexExecutor) doVertexRegionRequestFork(client *http.Client, re
 		helps.RecordAPIRequest(req.Context(), e.cfg, info)
 	}
 	locations := vertexRegionLocationsFork(auth, model, primary)
+	configured := len(locations)
 	now := time.Now()
 	// Read one immutable snapshot for the ordered plan, then recheck the
 	// latest positive evidence for each secondary admission below.
 	evidence := e.vertexLocations
+	inventoryUnavailable := evidence == nil
 	if inventory, ok := evidence.(*vertexlocations.Inventory); ok {
-		evidence = inventory.Current(now)
+		snapshot := inventory.Current(now)
+		inventoryUnavailable = snapshot == nil
+		evidence = snapshot
 	}
 	locations = verifiedVertexRegionsFork(locations, model, now, evidence)
 	if len(locations) < 2 || !vertexRegionProtocolFork(opts) || !vertexRegionRequestEligibleFork(req, project, model, primary, action) || !vertexRegionPlainTextFork(info.Body) {
 		record(req)
 		resp, err := client.Do(req)
+		if resp != nil && resp.StatusCode == http.StatusTooManyRequests {
+			reason := "request_not_eligible"
+			switch {
+			case configured < 2:
+				reason = "no_configured_secondary"
+				if auth != nil {
+					if mode, _ := vertexlocations.CredentialModeFork(auth.Metadata); mode == vertexlocations.ModeOffFork {
+						reason = "policy_off"
+					}
+				}
+			case inventoryUnavailable:
+				reason = "inventory_unavailable"
+			case len(locations) < 2:
+				reason = "no_verified_secondary"
+			}
+			verifiedModel := ""
+			if len(locations) >= 2 {
+				verifiedModel = model
+			}
+			trace := newVertexRegionTraceFork(req.Context(), verifiedModel, primary)
+			trace.active, trace.attempts = true, 1
+			trace.finish(reason, resp.StatusCode)
+		}
 		return resp, false, err
 	}
 	defer func() { _ = req.Body.Close() }()
@@ -357,6 +385,7 @@ func (e *GeminiVertexExecutor) doVertexRegionRequestFork(client *http.Client, re
 		helps.AppendAPIResponseChunk(req.Context(), e.cfg, raw)
 	}
 	router := vertexRegionRouterFork
+	router.trace = newVertexRegionTraceFork(req.Context(), model, primary)
 	router.secondaryAllowed = func(location string, now time.Time) bool {
 		return e.vertexLocations.Supports(model, location, now)
 	}
@@ -416,17 +445,27 @@ func (p vertexRegionRouteFork) do(original *http.Client, req *http.Request, proj
 	var lastErr statusErr
 	capacitySeen := false
 	handoff := false
+	phase := 1
+	outcome, terminalStatus := "capacity_exhausted", http.StatusTooManyRequests
+	defer func() { p.trace.finish(outcome, terminalStatus) }()
 	attempt := func(location string, firstPrimary bool) (*http.Response, bool, error) {
 		if err := ctx.Err(); err != nil {
+			outcome, terminalStatus = "interrupted", 0
 			return nil, false, err
 		}
 		now := p.now()
 		if location != locations[0] && p.secondaryAllowed != nil && !p.secondaryAllowed(location, now) {
+			p.trace.skip(location, phase, "verification_unavailable")
 			return nil, false, nil
 		}
 		key := helps.VertexRegionKeyFork{Project: project, Model: model, Location: location}
 		finish, until, recovering := p.cooldown.Claim(key, now)
 		if finish == nil {
+			reason := "in_flight"
+			if !until.IsZero() {
+				reason = "cooldown"
+			}
+			p.trace.skip(location, phase, reason)
 			if !until.IsZero() {
 				capacitySeen = true
 			}
@@ -439,6 +478,7 @@ func (p vertexRegionRouteFork) do(original *http.Client, req *http.Request, proj
 		}()
 		target, err := url.Parse(vertexBaseURL(location))
 		if err != nil {
+			outcome, terminalStatus = "local_prepare_error", 0
 			return nil, false, err
 		}
 		attemptReq := req.Clone(ctx)
@@ -447,12 +487,27 @@ func (p vertexRegionRouteFork) do(original *http.Client, req *http.Request, proj
 		attemptReq.Host = target.Host
 		attemptReq.Body, err = req.GetBody()
 		if err != nil {
+			outcome, terminalStatus = "local_prepare_error", 0
 			return nil, false, err
 		}
 		record(attemptReq)
 		resp, err := client.Do(attemptReq)
-		if err != nil || resp.StatusCode != http.StatusTooManyRequests {
+		if err != nil {
+			outcome, terminalStatus = "transport_error", 0
+			p.trace.attempt(location, phase, terminalStatus, outcome)
 			return resp, true, err
+		}
+		terminalStatus = resp.StatusCode
+		if resp.StatusCode != http.StatusTooManyRequests {
+			outcome = "upstream_response"
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				outcome = "upstream_success"
+				if capacitySeen {
+					outcome = "recovered"
+				}
+			}
+			p.trace.attempt(location, phase, terminalStatus, outcome)
+			return resp, true, nil
 		}
 		prefix, errRead := io.ReadAll(io.LimitReader(resp.Body, vertexRegionCapacityMaxFork+1))
 		if errRead != nil || !vertexRegionCapacity429Fork(resp.StatusCode, prefix) {
@@ -460,6 +515,11 @@ func (p vertexRegionRouteFork) do(original *http.Client, req *http.Request, proj
 			// Only the untouched primary's complete generic 429 can fall
 			// back to CPA's existing credential and retry policy.
 			handoff = firstPrimary && !recovering && errRead == nil && vertexRegionGeneric429Fork(prefix)
+			outcome = "429_not_regional_capacity"
+			if handoff {
+				outcome = "generic_429_native_handoff"
+			}
+			p.trace.attempt(location, phase, terminalStatus, outcome)
 			resp.Body = vertexRegionPrefixedBodyFork{io.MultiReader(bytes.NewReader(prefix), resp.Body), resp.Body}
 			return resp, true, nil
 		}
@@ -477,7 +537,7 @@ func (p vertexRegionRouteFork) do(original *http.Client, req *http.Request, proj
 		finish = nil
 		recordCapacity(resp, prefix)
 		lastErr = newGeminiStatusErr(resp.StatusCode, resp.Header, prefix)
-		helps.LogWithRequestID(ctx).WithField("location", location).Debug("vertex regional capacity cooldown")
+		p.trace.attempt(location, phase, terminalStatus, "regional_capacity_429")
 		return nil, true, nil
 	}
 
@@ -500,6 +560,7 @@ func (p vertexRegionRouteFork) do(original *http.Client, req *http.Request, proj
 			return resp, !handoff, err
 		}
 	}
+	phase = 2
 	// Each Phase 2 iteration can issue at most one new HTTP request. Skip a
 	// cooldown atomically again after waiting because another request may
 	// have refreshed it. The fixed loop bound also limits contention waits.
@@ -513,6 +574,7 @@ func (p vertexRegionRouteFork) do(original *http.Client, req *http.Request, proj
 			break
 		}
 		if err := p.wait(ctx, ready.Sub(now)); err != nil {
+			outcome, terminalStatus = "interrupted", 0
 			return nil, true, err
 		}
 		if !p.now().Before(waitLimit) {
@@ -529,9 +591,11 @@ func (p vertexRegionRouteFork) do(original *http.Client, req *http.Request, proj
 		}
 	}
 	if err := ctx.Err(); err != nil {
+		outcome, terminalStatus = "interrupted", 0
 		return nil, true, err
 	}
 	if lastErr.code == 0 {
+		outcome = "no_sendable_candidate"
 		lastErr = statusErr{code: http.StatusTooManyRequests, msg: "vertex approved endpoints are cooling down"}
 	}
 	// The public hint is when any approved endpoint can be tried again, not
