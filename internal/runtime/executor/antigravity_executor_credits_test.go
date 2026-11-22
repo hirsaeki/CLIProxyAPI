@@ -898,6 +898,8 @@ func TestAntigravityManagerExecuteAndStream_ToppedUpCreditsRecoverDuringQuotaCoo
 				ResponseFormat: sdktranslator.FormatAntigravity,
 			}
 
+			refreshKey := authID + "|" + cliproxyauth.AntigravityCreditsScope(registered)
+
 			// Step 1: Exhaust weekly quota (QUOTA_EXHAUSTED) and credits (INSUFFICIENT_G1_CREDITS_BALANCE).
 			cliproxyauth.SetAntigravityCreditsHint(authID, cliproxyauth.AntigravityCreditsHint{
 				Known:           true,
@@ -915,7 +917,7 @@ func TestAntigravityManagerExecuteAndStream_ToppedUpCreditsRecoverDuringQuotaCoo
 					t.Fatal("initial Execute() succeeded, want 429 after quota and credits exhaustion")
 				}
 			}
-			if value, ok := antigravityCreditsHintRefreshByID.Load(authID); ok {
+			if value, ok := antigravityCreditsHintRefreshByID.Load(refreshKey); ok {
 				if state, ok := value.(*antigravityCreditsHintRefreshState); ok && state != nil {
 					waitForAntigravityCreditsRefresh(t, state)
 				}
@@ -931,7 +933,7 @@ func TestAntigravityManagerExecuteAndStream_ToppedUpCreditsRecoverDuringQuotaCoo
 			// Step 2: Top up credits and expire the cached hint/throttle window while model remains in 1h quota cooldown.
 			toppedUp.Store(true)
 			callsBeforeTopUp := loadCodeAssistCalls.Load()
-			if value, ok := antigravityCreditsHintRefreshByID.Load(authID); ok {
+			if value, ok := antigravityCreditsHintRefreshByID.Load(refreshKey); ok {
 				if state, ok := value.(*antigravityCreditsHintRefreshState); ok && state != nil {
 					state.mu.Lock()
 					state.lastAttempt = time.Now().Add(-antigravityCreditsHintRefreshInterval - time.Second)
@@ -972,11 +974,12 @@ func TestAntigravityManagerExecuteAndStream_ToppedUpCreditsRecoverDuringQuotaCoo
 				}
 			}
 
-			if value, ok := antigravityCreditsHintRefreshByID.Load(authID); ok {
-				if state, ok := value.(*antigravityCreditsHintRefreshState); ok && state != nil {
-					waitForAntigravityCreditsRefresh(t, state)
-				}
+			value, _ := antigravityCreditsHintRefreshByID.Load(refreshKey)
+			state, okState := value.(*antigravityCreditsHintRefreshState)
+			if !okState || state == nil {
+				t.Fatal("post-top-up refresh did not register the scoped task state")
 			}
+			waitForAntigravityCreditsRefresh(t, state)
 			if loadCodeAssistCalls.Load() <= callsBeforeTopUp {
 				t.Fatalf("loadCodeAssist calls after top-up = %d, want > %d", loadCodeAssistCalls.Load(), callsBeforeTopUp)
 			}
