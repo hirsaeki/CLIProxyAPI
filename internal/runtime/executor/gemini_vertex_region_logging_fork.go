@@ -59,7 +59,7 @@ func (t *vertexRegionTraceFork) attempt(region string, phase, status int, result
 	}
 	t.attempts++
 	t.lastRegion = region
-	if !t.active && phase == 1 && region == t.primary && status != 429 {
+	if !t.active && phase == 1 && region == t.primary && status >= 200 && status < 300 {
 		return
 	}
 	t.active = true
