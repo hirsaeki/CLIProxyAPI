@@ -90,7 +90,7 @@ func TestReloadConfigIgnoresEmptyLoadAfterHashCheckFork(t *testing.T) {
 
 	originalLoad := loadConfigFileFunc
 	t.Cleanup(func() { loadConfigFileFunc = originalLoad })
-	var parsedHash string
+	var rejectedEmpty bool
 	loadConfigFileFunc = func(path string) (*config.Config, error) {
 		// Deterministically expose the save's truncate window only to the loader,
 		// after the first nonempty hash read. Restore the file before it returns.
@@ -98,17 +98,15 @@ func TestReloadConfigIgnoresEmptyLoadAfterHashCheckFork(t *testing.T) {
 			return nil, errWrite
 		}
 		cfg, errLoad := originalLoad(path)
-		if cfg != nil {
-			parsedHash = cfg.SourceHash
-		}
+		rejectedEmpty = errLoad != nil && cfg == nil
 		if errWrite := os.WriteFile(path, candidate, 0o600); errWrite != nil {
 			return nil, errWrite
 		}
 		return cfg, errLoad
 	}
 	w.ReloadConfigIfChanged()
-	if parsedHash != config.ComputeSourceHash(nil) {
-		t.Fatalf("injected loader source hash = %q, want empty snapshot hash", parsedHash)
+	if !rejectedEmpty {
+		t.Fatal("startup loader accepted a transient empty configuration")
 	}
 	if len(loadedPorts) != 1 {
 		t.Fatalf("empty snapshot triggered a callback: %v", loadedPorts)
@@ -125,7 +123,12 @@ func TestReloadConfigIgnoresEmptyLoadAfterHashCheckFork(t *testing.T) {
 	if len(loadedPorts) != 2 || loadedPorts[1] != 8318 {
 		t.Fatalf("restored candidate reload ports = %v, want [8317 8318]", loadedPorts)
 	}
-	if w.lastConfigHash != config.ComputeSourceHash(candidate) {
-		t.Fatalf("candidate hash = %q, want restored snapshot hash", w.lastConfigHash)
+	committed, errRead := os.ReadFile(configPath)
+	if errRead != nil {
+		t.Fatal(errRead)
+	}
+	// Startup may persist a generated server ID while loading the restored file.
+	if want := config.ComputeSourceHash(committed); w.lastConfigHash != want {
+		t.Fatalf("candidate hash = %q, want committed snapshot hash %q", w.lastConfigHash, want)
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
@@ -72,8 +73,10 @@ func TestClaudeExecutor_ExecuteStream_Translated_ClientDisconnectAfterTerminalEv
 	}()
 
 	pluginName := "test-claude-translated-disconnect"
-	plugin := &captureClaudeUsagePlugin{
-		records: make(chan usage.Record, 4),
+	authID := t.Name() + "-" + uuid.NewString()
+	plugin := &captureClaudeSSELimitUsagePluginFork{
+		captureClaudeUsagePlugin: &captureClaudeUsagePlugin{records: make(chan usage.Record, 4)},
+		authID:                   authID,
 	}
 	usage.RegisterNamedPlugin(pluginName, plugin)
 	t.Cleanup(func() {
@@ -82,6 +85,7 @@ func TestClaudeExecutor_ExecuteStream_Translated_ClientDisconnectAfterTerminalEv
 
 	exec := NewClaudeExecutor(&config.Config{})
 	auth := &cliproxyauth.Auth{
+		ID: authID,
 		Attributes: map[string]string{
 			"api_key":  "key-123",
 			"base_url": server.URL,
@@ -168,8 +172,10 @@ func TestClaudeExecutor_ExecuteStream_Passthrough_ClientDisconnectAfterTerminalE
 	}()
 
 	pluginName := "test-claude-passthrough-disconnect"
-	plugin := &captureClaudeUsagePlugin{
-		records: make(chan usage.Record, 4),
+	authID := t.Name() + "-" + uuid.NewString()
+	plugin := &captureClaudeSSELimitUsagePluginFork{
+		captureClaudeUsagePlugin: &captureClaudeUsagePlugin{records: make(chan usage.Record, 4)},
+		authID:                   authID,
 	}
 	usage.RegisterNamedPlugin(pluginName, plugin)
 	t.Cleanup(func() {
@@ -178,6 +184,7 @@ func TestClaudeExecutor_ExecuteStream_Passthrough_ClientDisconnectAfterTerminalE
 
 	exec := NewClaudeExecutor(&config.Config{})
 	auth := &cliproxyauth.Auth{
+		ID: authID,
 		Attributes: map[string]string{
 			"api_key":  "key-123",
 			"base_url": server.URL,
