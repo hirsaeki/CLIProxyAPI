@@ -26,26 +26,33 @@ func TestVertexRegionRoutingLogsFork(t *testing.T) {
 		generic       bool
 		retries       int
 		wantPhase     int
+		automatic     bool
+		hint          string
+		firstResult   string
 	}{
-		{"primary-success-quiet", "", []int{200}, false, 0, 0},
-		{"primary-503", "upstream_response", []int{503}, false, 0, 1},
-		{"primary-transport-error", "transport_error", []int{0}, false, 0, 1},
-		{"generic-hands-off", "generic_429_native_handoff", []int{429}, true, 0, 1},
-		{"sweep-recovers", "recovered", []int{429, 200}, false, 0, 1},
-		{"exhausted", "capacity_exhausted", []int{429, 429}, false, 0, 1},
-		{"phase-two-recovers", "recovered", []int{429, 429, 200}, false, 1, 2},
-		{"alternate-transport-error", "transport_error", []int{429, 0}, false, 0, 1},
-		{"alternate-local-error", "local_prepare_error", []int{429}, false, 0, 1},
+		{name: "primary-success-quiet", statuses: []int{200}},
+		{name: "primary-503", outcome: "upstream_response", statuses: []int{503}, wantPhase: 1},
+		{name: "primary-transport-error", outcome: "transport_error", statuses: []int{0}, wantPhase: 1},
+		{name: "generic-hands-off", outcome: "generic_429_native_handoff", statuses: []int{429}, generic: true, wantPhase: 1, firstResult: "generic_429_native_handoff"},
+		{name: "sweep-recovers", outcome: "recovered", statuses: []int{429, 200}, wantPhase: 1, firstResult: "regional_capacity_429"},
+		{name: "exhausted", outcome: "capacity_exhausted", statuses: []int{429, 429}, wantPhase: 1},
+		{name: "phase-two-recovers", outcome: "recovered", statuses: []int{429, 429, 200}, retries: 1, wantPhase: 2},
+		{name: "alternate-transport-error", outcome: "transport_error", statuses: []int{429, 0}, wantPhase: 1},
+		{name: "alternate-local-error", outcome: "local_prepare_error", statuses: []int{429}, wantPhase: 1},
+		{name: "paygo-sweep-recovers", outcome: "recovered", statuses: []int{429, 200}, automatic: true, generic: true, wantPhase: 1, firstResult: "generic_paygo_429"},
+		{name: "paygo-hint-cuts-sweep", outcome: "retry_hint_exceeds_budget", statuses: []int{429}, automatic: true, generic: true, hint: "20", wantPhase: 1, firstResult: "generic_paygo_429"},
+		{name: "paygo-hint-cuts-phase-two", outcome: "retry_hint_exceeds_budget", statuses: []int{429, 429}, automatic: true, generic: true, hint: "20", retries: 1, wantPhase: 1, firstResult: "generic_paygo_429"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			logger, hook := logtest.NewNullLogger()
 			now := time.Unix(100, 0)
 			p := vertexRegionRouteFork{
-				cooldown: &helps.VertexRegionCooldownFork{},
-				now:      func() time.Time { return now },
-				wait:     func(_ context.Context, d time.Duration) error { now = now.Add(d); return nil },
-				delay:    func(int) time.Duration { return time.Second },
-				trace:    &vertexRegionTraceFork{logger: logger.WithField("model", mockVertexModelFork), primary: "global"},
+				automatic: tc.automatic,
+				cooldown:  &helps.VertexRegionCooldownFork{},
+				now:       func() time.Time { return now },
+				wait:      func(_ context.Context, d time.Duration) error { now = now.Add(d); return nil },
+				delay:     func(int) time.Duration { return time.Second },
+				trace:     &vertexRegionTraceFork{logger: logger.WithField("model", mockVertexModelFork), primary: "global"},
 			}
 			sent := 0
 			client := &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
@@ -65,7 +72,11 @@ func TestVertexRegionRoutingLogsFork(t *testing.T) {
 						body = mockGeneric429Fork
 					}
 				}
-				return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{"X-Test-Private": []string{"test-private-header"}}}, nil
+				headers := http.Header{"X-Test-Private": []string{"test-private-header"}}
+				if tc.hint != "" && sent == len(tc.statuses) {
+					headers.Set("Retry-After", tc.hint)
+				}
+				return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body)), Header: headers}, nil
 			})}
 			req, err := http.NewRequest(http.MethodPost, vertexBaseURL("global")+vertexRegionPathFork(project, mockVertexModelFork, "global", action), strings.NewReader(mockVertexBodyFork))
 			if err != nil {
@@ -104,8 +115,11 @@ func TestVertexRegionRoutingLogsFork(t *testing.T) {
 					t.Fatal("diagnostic included private sentinel data")
 				}
 			}
-			if len(events) != sent+1 || stop == tc.generic {
+			if len(events) != sent+1 || stop != (tc.automatic || !tc.generic) {
 				t.Fatalf("diagnostic count=%d, sent=%d, stop native=%v", len(events), sent, stop)
+			}
+			if tc.firstResult != "" && events[0].Data["result"] != tc.firstResult {
+				t.Fatalf("first attempt result=%v, want %q", events[0].Data["result"], tc.firstResult)
 			}
 			terminal := events[len(events)-1]
 			lastAttempt := events[len(events)-2]

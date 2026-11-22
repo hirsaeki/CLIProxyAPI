@@ -118,29 +118,33 @@ between refresh ticks.
 
 ## Request behavior
 
-1. **Phase 1:** Visit the first and then every eligible configured location
-   in order at most once, stopping at first success or non-capacity failure.
-   A location already under cooldown is skipped. Only an explicit, temporary
-   **regional capacity** refusal can advance this mode. On the first normal
-   attempt to its configured primary, an exact generic `429 RESOURCE_EXHAUSTED`
-   retry-later response goes back to CPA's existing retry/cooldown policy
-   unchanged, without switching regions in this feature. CPA may still use other
-   configured auth entries according to its own settings; that separate behavior
-   is not governed by this credential's regional policy. After routing has taken over,
-   including cooldown recovery or any attempt to an alternate, a generic 429 is
-   terminal. Quota or acceleration errors, permission errors, unknown details,
-   transport errors, and model or endpoint errors remain terminal.
-2. **Phase 2:** If the eligible sweep was exhausted by regional capacity,
-   make up to `min(request-retry, auth.request_retry if set, 4)` additional
-   attempts. This **replaces** CPA's generic outer retry or credential rotation
-   for the opted-in attempt. Use capped exponential equal jitter, with
-   a one-second minimum per-region cooldown and the greater valid value from
-   HTTP `Retry-After` and Google RPC retry hints. Only start a retry before
-   `min(max-retry-interval, 8s)` from entry into the retry router and before the
-   caller's deadline if provided. A zero/negative retry count or retry interval
-   disables Phase 2, not the explicitly configured sweep. Existing request
-   contexts bound in-flight network work; CPA does not impose an extra timeout
-   on an accepted upstream response or on a stream.
+1. **Phase 1:** Visit the primary and then every eligible location in order at
+   most once, stopping on success or a terminal error. Skip endpoints on
+   confirmed regional cooldown. Both opt-in modes advance on an explicit,
+   temporary regional-capacity refusal. **Automatic** also advances on the
+   exact documented PayGo retry-later 429 envelope (optionally with valid
+   RetryInfo). Bare or other 429 text, explicit quota, acceleration or
+   provisioned-throughput errors, unknown details, permission errors, and
+   model, endpoint or transport errors do not advance it. In legacy mode, an
+   exact generic retry-later response from the first normal primary attempt
+   still goes to CPA's pre-existing retry and alternate-credential policy;
+   after routing takes over, that response is terminal in legacy mode.
+2. **Phase 2:** After fully sweeping the eligible endpoints, make up to
+   `min(request-retry, auth.request_retry if set, 4)` additional attempts for
+   retryable refusals. This replaces CPA's outer retry and credential
+   rotation for the routed attempt. Use capped exponential equal jitter.
+   Confirmed regional refusals have a shared per-region minimum cooldown of
+   one second, increased to the greater valid HTTP `Retry-After` or Google
+   retry hint. A generic PayGo refusal gives that endpoint a one-second
+   readiness delay only for this request, and its greater valid
+   `Retry-After` or RetryInfo is a floor for **every** later attempt on this
+   request, even during Phase 1. If that floor cannot be reached within the
+   existing wait budget and caller deadline, return 429 without dispatching
+   another attempt. The route may wait only until
+   `min(max-retry-interval, 8s)` from entry when both retry settings are
+   positive, further bounded by the caller's deadline. A zero retry count
+   disables Phase 2 but does not suppress a Phase 1 sweep that requires no
+   wait. CPA does not add an HTTP timeout to an accepted response or stream.
 3. **Commit:** An HTTP success response ends routing. Streaming errors after
    an upstream 2xx, even before any downstream payload, are not replayed.
    Requests and redirects never leave the approved generated Vertex URLs.
@@ -150,22 +154,24 @@ and location. A short overlapping response cannot replace a longer
 `Retry-After`; successful overlapping requests cannot clear it. A single probe
 can run after a cooldown expires. This is not a durable, cross-instance
 limit. Exhaustion returns 429 without changing generic auth/model quota
-state, and a retry hint reflects the earliest approved location's cooldown.
+state, and a retry hint reflects the earliest approved location's readiness
+subject to any remaining request-wide PayGo hint.
 Default service logs show `vertex regional HTTP attempt` for actual sends
 during failover, with region, phase (1 = sweep; 2 = retry), attempt number and
-HTTP status (0 = transport error). `vertex regional candidate skipped` is
-not a send. `vertex regional routing finished` summarizes recovery,
-exhaustion, native handoff for an ambiguous generic 429, or why there was no
-regional attempt (for example, `policy_off`, `inventory_unavailable` or
-`no_verified_secondary`). These messages use the normal request ID when
-available and do not require debug or request-body logging. A normal primary
-success emits none of these diagnostics.
+HTTP status (0 = transport error). The attempt result distinguishes
+`generic_paygo_429` from `regional_capacity_429`.
+`vertex regional candidate skipped` is not a send.
+`vertex regional routing finished` summarizes recovery, exhaustion, legacy
+native handoff, a hint beyond the wait budget (`retry_hint_exceeds_budget`),
+or why there was no regional attempt (for example, `policy_off`,
+`inventory_unavailable` or `no_verified_secondary`). These messages use the
+normal request ID when available and do not require debug or request-body
+logging. A normal primary success emits none of these diagnostics.
 
 [Google's 429 guidance](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/deploy/error-code-429)
 describes shared capacity as well as fixed quota and acceleration 429s. The
-generic documented PayGo text is not a positive discriminator, so this mode
-does not rotate on it. The narrow positive classifier is covered by synthetic
-regional-capacity examples. No real provider positive signature or production
-behavior was verified. A response without explicit regional-capacity evidence
-does not switch regions; only the narrowly defined first-primary generic
-response above preserves CPA's ordinary retry behavior.
+generic documented PayGo text is not evidence of live capacity in any
+particular region. Automatic treats its narrowly recognized envelope as
+permission for a bounded, same-account retry, not as a regional-capacity
+diagnosis or a way to work around fixed quota. Synthetic tests cover both
+response classes; no live provider routing behavior was verified.
