@@ -287,10 +287,7 @@ func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 			streamUsage.ObserveAntigravityStream(payload)
 
 			if errorResult := ojson.GetBytesNoCopy(payload, "error"); errorResult.Exists() && errorResult.Type != ojson.Null {
-				statusCode := int(errorResult.Get("code").Int())
-				if statusCode < http.StatusBadRequest || statusCode > 599 {
-					statusCode = http.StatusBadGateway
-				}
+				statusCode := antigravitySSEStatusFork(errorResult)
 				if statusCode == http.StatusTooManyRequests {
 					if err429 := e.applyAntigravity429State(ctx, auth, baseModel, useCredits, nil, payload); err429 != nil {
 						streamErr = err429

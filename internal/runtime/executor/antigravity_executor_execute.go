@@ -437,10 +437,7 @@ func (e *AntigravityExecutor) executeClaudeNonStream(ctx context.Context, auth *
 		// upstream status and 429/TOS/replay bookkeeping instead of letting it
 		// degrade into a synthetic zero-output 502 or truncated HTTP 200 response.
 		if errorResult := ojson.GetBytesNoCopy(payload, "error"); errorResult.Exists() && errorResult.Type != ojson.Null {
-			statusCode := int(errorResult.Get("code").Int())
-			if statusCode < http.StatusBadRequest || statusCode > 599 {
-				statusCode = http.StatusBadGateway
-			}
+			statusCode := antigravitySSEStatusFork(errorResult)
 			if errClose := httpResp.Body.Close(); errClose != nil {
 				log.Errorf("antigravity executor: close response body error: %v", errClose)
 			}
