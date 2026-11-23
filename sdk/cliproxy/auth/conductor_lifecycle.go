@@ -768,6 +768,7 @@ func (m *Manager) updateInternalLockedWithOptions(ctx context.Context, base, aut
 		return nil, false, true, false, fmt.Errorf("auth %s changed registration during persistence", auth.ID)
 	}
 	mergeAuthSaveDelta(auth, existingBeforeSave, existing, false)
+	clearStaleDisabledAvailability(existingBeforeSave, auth, now)
 	if m.migrateAuthAliasModelStatesLocked(auth, nil, now, false) {
 		cooldownStateChanged = true
 		updateAggregatedAvailability(auth, now)
