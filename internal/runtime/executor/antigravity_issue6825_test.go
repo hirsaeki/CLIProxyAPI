@@ -32,22 +32,55 @@ func TestIssue6825StreamToolIndicesAcrossChunks(t *testing.T) {
 		`{"response":{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"get_time","args":{"tz":"America/Santiago"}}},{"functionCall":{"name":"get_time","args":{"tz":"Asia/Tokyo"}}}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":5,"totalTokenCount":15}}}`,
 	}
 	var param any
-	var indices []int64
-	var arguments []string
+	var client issue6825ToolCallAccumulator
 	for _, chunk := range chunks {
 		for _, out := range sdktranslator.TranslateStream(context.Background(), sdktranslator.FormatAntigravity, sdktranslator.FormatOpenAI, "gemini-3-flash", original, translated, []byte(chunk), &param) {
 			for _, call := range ojson.GetBytes(out, "choices.0.delta.tool_calls").Array() {
-				indices = append(indices, call.Get("index").Int())
-				arguments = append(arguments, call.Get("function.arguments").String())
+				client.observe(t, call)
 			}
 		}
 	}
-	if want := []int64{0, 1, 2}; !reflect.DeepEqual(indices, want) {
-		t.Errorf("stream tool indices = %v, want %v; clients must not merge distinct calls", indices, want)
+	var arguments []string
+	for _, call := range client.calls {
+		arguments = append(arguments, call["function"].(map[string]string)["arguments"])
 	}
 	if want := []string{`{"tz":"UTC"}`, `{"tz":"America/Santiago"}`, `{"tz":"Asia/Tokyo"}`}; !reflect.DeepEqual(arguments, want) {
 		t.Errorf("tool arguments = %v, want %v", arguments, want)
 	}
+}
+
+// issue6825ToolCallAccumulator models a chat client assembling arguments by index.
+type issue6825ToolCallAccumulator struct {
+	calls []map[string]any
+}
+
+func (a *issue6825ToolCallAccumulator) observe(t *testing.T, call ojson.Result) {
+	t.Helper()
+	indexField := call.Get("index")
+	index := int(indexField.Int())
+	id := call.Get("id").String()
+	name := call.Get("function.name").String()
+	args := call.Get("function.arguments").String()
+	if indexField.Type != ojson.Number || index < 0 || index > len(a.calls) {
+		t.Fatalf("invalid tool index in %s after %d tool calls", call.Raw, len(a.calls))
+	}
+	if index == len(a.calls) {
+		if id == "" || name == "" {
+			t.Fatalf("new tool at index %d is missing its ID or name: %s", index, call.Raw)
+		}
+		for _, existing := range a.calls {
+			if existing["id"] == id {
+				t.Fatalf("distinct tool call at index %d reused ID %q", index, id)
+			}
+		}
+		a.calls = append(a.calls, map[string]any{"id": id, "type": "function", "function": map[string]string{"name": name, "arguments": args}})
+		return
+	}
+	// Later deltas may only contribute arguments to the existing tool call.
+	if id != "" || name != "" {
+		t.Fatalf("tool index %d reintroduced an existing tool call: %s", index, call.Raw)
+	}
+	a.calls[index]["function"].(map[string]string)["arguments"] += args
 }
 
 // issue6825Conversation keeps translation, request preparation and replay real;
@@ -128,7 +161,7 @@ func (c *issue6825Conversation) callWithContext(ctx context.Context, payload []b
 		c.t.Fatalf("ExecuteStream: %v", errExecute)
 	}
 	message := []byte(`{"role":"assistant"}`)
-	var calls []map[string]any
+	var client issue6825ToolCallAccumulator
 	var content, reasoning string
 	for chunk := range response.Chunks {
 		if chunk.Err != nil {
@@ -140,17 +173,13 @@ func (c *issue6825Conversation) callWithContext(ctx context.Context, payload []b
 			content += delta.Get("content").String()
 			reasoning += delta.Get("reasoning_content").String()
 			for _, call := range delta.Get("tool_calls").Array() {
-				index := int(call.Get("index").Int())
-				if index != len(calls) {
-					c.t.Fatalf("unexpected new tool index %d, want %d", index, len(calls))
-				}
-				calls = append(calls, map[string]any{"id": call.Get("id").String(), "type": "function", "function": map[string]string{"name": call.Get("function.name").String(), "arguments": call.Get("function.arguments").String()}})
+				client.observe(c.t, call)
 			}
 		}
 	}
 	msgDoc := ojson.NewDoc(message)
-	if len(calls) > 0 {
-		_ = msgDoc.Set("tool_calls", calls)
+	if len(client.calls) > 0 {
+		_ = msgDoc.Set("tool_calls", client.calls)
 	}
 	if content != "" {
 		_ = msgDoc.Set("content", content)
