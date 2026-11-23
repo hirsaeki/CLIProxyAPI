@@ -776,24 +776,31 @@ func TestConvertOpenAIResponsesRequestToAntigravity_InterruptedMessageBeforeReal
 		"stream": false
 	}`
 
-	out, _ := ConvertOpenAIResponsesRequestToAntigravity("gemini-3.8-flash-high", []byte(inputJSON), false)
+	out, errConvert := ConvertOpenAIResponsesRequestToAntigravity("gemini-3.8-flash-high", []byte(inputJSON), false)
+	if errConvert != nil {
+		t.Fatalf("ConvertOpenAIResponsesRequestToAntigravity failed: %v", errConvert)
+	}
 	rawRequest := ojson.GetBytesNoCopy(out, "request").Raw
 	if errPair := sigcompat.ValidateGeminiFunctionCallPairing([]byte(rawRequest)); errPair != nil {
 		t.Fatalf("ValidateGeminiFunctionCallPairing failed on Antigravity interrupted message before real output request: %v; output=%s", errPair, out)
 	}
 
-	// The user message precedes the completed tool response turn
-	stopText := ojson.GetBytesNoCopy(out, "request.contents.2.parts.0.text").String()
-	if stopText != "Stop, do something else instead." {
-		t.Fatalf("unexpected text in request.contents[2]: %q", stopText)
+	// Antigravity requires the grouped tool responses immediately after the
+	// calls. The intervening instruction survives as the next user turn.
+	contents := ojson.GetBytesNoCopy(out, "request.contents").Array()
+	if len(contents) != 4 {
+		t.Fatalf("got %d turns, want 4: %s", len(contents), out)
 	}
-	c1Resp := ojson.GetBytesNoCopy(out, "request.contents.3.parts.0.functionResponse")
+	c1Resp := contents[2].Get("parts.0.functionResponse")
 	if c1Resp.Get("id").String() != "c1" || c1Resp.Get("name").String() != "shell" || c1Resp.Get("response.result").String() != "call interrupted, no output" {
 		t.Fatalf("unexpected synthesized response for c1: %s", c1Resp.Raw)
 	}
-	c2Resp := ojson.GetBytesNoCopy(out, "request.contents.3.parts.1.functionResponse")
+	c2Resp := contents[2].Get("parts.1.functionResponse")
 	if c2Resp.Get("id").String() != "c2" || c2Resp.Get("name").String() != "shell" || c2Resp.Get("response.result").String() != "/tmp\n" {
 		t.Fatalf("unexpected real response for c2: %s", c2Resp.Raw)
+	}
+	if role, stopText := contents[3].Get("role").String(), contents[3].Get("parts.0.text").String(); role != "user" || stopText != "Stop, do something else instead." {
+		t.Fatalf("deferred instruction not preserved: role=%q text=%q", role, stopText)
 	}
 }
 
