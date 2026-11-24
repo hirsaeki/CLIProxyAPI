@@ -31,7 +31,10 @@ func TestVertexRegionRoutingLogsFork(t *testing.T) {
 		firstResult   string
 	}{
 		{name: "primary-success-quiet", statuses: []int{200}},
-		{name: "primary-502", outcome: "upstream_response", statuses: []int{502}, wantPhase: 1},
+		{name: "primary-500", outcome: "upstream_response", statuses: []int{500}, wantPhase: 1},
+		{name: "primary-504", outcome: "upstream_response", statuses: []int{504}, wantPhase: 1},
+		{name: "502-recovers", outcome: "recovered", statuses: []int{502, 200}, wantPhase: 1},
+		{name: "502-exhausted", outcome: "upstream_502_exhausted", statuses: []int{503, 502}, retries: 3, wantPhase: 1},
 		{name: "503-recovers", outcome: "recovered", statuses: []int{503, 200}, wantPhase: 1},
 		{name: "503-exhausted", outcome: "upstream_503_exhausted", statuses: []int{503, 503}, retries: 3, wantPhase: 1},
 		{name: "primary-transport-error", outcome: "transport_error", statuses: []int{0}, wantPhase: 1},
@@ -95,7 +98,7 @@ func TestVertexRegionRoutingLogsFork(t *testing.T) {
 				}
 			}
 			resp, stop, routeErr := p.do(client, req, project, mockVertexModelFork, action, []string{"global", "us"}, tc.retries, 8*time.Second, func(*http.Request) {}, func(*http.Response, []byte) {})
-			if tc.name == "primary-502" && (routeErr != nil || resp == nil || resp.StatusCode != 502) {
+			if tc.name == "primary-500" && (routeErr != nil || resp == nil || resp.StatusCode != 500) {
 				t.Fatalf("primary error response changed: response=%v err=%v", resp, routeErr)
 			}
 			if tc.name == "primary-transport-error" && (resp != nil || routeErr == nil || !strings.Contains(routeErr.Error(), "test-private-transport-error")) {
