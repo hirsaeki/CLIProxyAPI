@@ -465,7 +465,13 @@ func (p vertexRegionRouteFork) do(original *http.Client, req *http.Request, proj
 	var lastErr statusErr
 	retryableSeen := false
 	handoff := false
-	var payGoFloor time.Time
+	var retryFloor time.Time
+	var lastUnavailable *http.Response
+	defer func() {
+		if lastUnavailable != nil {
+			_ = lastUnavailable.Body.Close()
+		}
+	}()
 	var payGoReady map[string]time.Time
 	phase := 1
 	outcome, terminalStatus := "capacity_exhausted", http.StatusTooManyRequests
@@ -476,7 +482,7 @@ func (p vertexRegionRouteFork) do(original *http.Client, req *http.Request, proj
 			return nil, false, err
 		}
 		now := p.now()
-		if payGoFloor.After(now) {
+		if retryFloor.After(now) {
 			return nil, false, nil
 		}
 		if payGoReady[location].After(now) {
@@ -519,6 +525,11 @@ func (p vertexRegionRouteFork) do(original *http.Client, req *http.Request, proj
 			outcome, terminalStatus = "local_prepare_error", 0
 			return nil, false, err
 		}
+		previousUnavailable := lastUnavailable != nil
+		if previousUnavailable {
+			_ = lastUnavailable.Body.Close()
+			lastUnavailable = nil
+		}
 		record(attemptReq)
 		resp, err := client.Do(attemptReq)
 		if err != nil {
@@ -527,11 +538,24 @@ func (p vertexRegionRouteFork) do(original *http.Client, req *http.Request, proj
 			return resp, true, err
 		}
 		terminalStatus = resp.StatusCode
+		if phase == 1 && resp.StatusCode == http.StatusServiceUnavailable {
+			// Only advance the initial sweep to a different approved location.
+			// Do not create a shared capacity cooldown or schedule Phase 2
+			// from a 503. Save the response unchanged if the sweep ends here.
+			lastUnavailable = resp
+			outcome = "upstream_503_exhausted"
+			p.trace.attempt(location, phase, terminalStatus, "upstream_503")
+			now = p.now()
+			if delay, _ := helps.ParseRetryDelayWithHeaders(resp.Header, nil, now); delay != nil && *delay > 0 {
+				retryFloor = now.Add(*delay)
+			}
+			return nil, true, nil
+		}
 		if resp.StatusCode != http.StatusTooManyRequests {
 			outcome = "upstream_response"
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 				outcome = "upstream_success"
-				if retryableSeen {
+				if retryableSeen || previousUnavailable {
 					outcome = "recovered"
 				}
 			}
@@ -574,10 +598,13 @@ func (p vertexRegionRouteFork) do(original *http.Client, req *http.Request, proj
 				payGoReady = make(map[string]time.Time)
 			}
 			payGoReady[location] = now.Add(vertexRegionMinCooldownFork)
-			if until := now.Add(delay); delay > 0 && until.After(payGoFloor) {
-				payGoFloor = until
+			if until := now.Add(delay); delay > 0 && until.After(retryFloor) {
+				retryFloor = until
 			}
 		} else {
+			if previousUnavailable {
+				outcome = "capacity_exhausted"
+			}
 			finish(now.Add(max(vertexRegionMinCooldownFork, delay)))
 			finish = nil
 			p.trace.attempt(location, phase, terminalStatus, "regional_capacity_429")
@@ -597,8 +624,8 @@ func (p vertexRegionRouteFork) do(original *http.Client, req *http.Request, proj
 			if local := payGoReady[location]; local.After(due) {
 				due = local
 			}
-			if payGoFloor.After(due) {
-				due = payGoFloor
+			if retryFloor.After(due) {
+				due = retryFloor
 			}
 			if earliest.IsZero() || due.Before(earliest) {
 				earliest = due
@@ -614,18 +641,18 @@ func (p vertexRegionRouteFork) do(original *http.Client, req *http.Request, proj
 			return nil, true, err
 		}
 		now := p.now()
-		if payGoFloor.After(now) {
-			if !payGoFloor.Before(waitLimit) {
+		if retryFloor.After(now) {
+			if !retryFloor.Before(waitLimit) {
 				outcome = "retry_hint_exceeds_budget"
 				sweepComplete = false
 				break
 			}
-			if err := p.wait(ctx, payGoFloor.Sub(now)); err != nil {
+			if err := p.wait(ctx, retryFloor.Sub(now)); err != nil {
 				outcome, terminalStatus = "interrupted", 0
 				return nil, true, err
 			}
 			now = p.now()
-			if now.Before(payGoFloor) || !now.Before(waitLimit) {
+			if now.Before(retryFloor) || !now.Before(waitLimit) {
 				outcome = "retry_hint_not_reached"
 				if !now.Before(waitLimit) {
 					outcome = "retry_hint_exceeds_budget"
@@ -638,6 +665,17 @@ func (p vertexRegionRouteFork) do(original *http.Client, req *http.Request, proj
 			return resp, !handoff, err
 		}
 	}
+	if lastUnavailable != nil {
+		if err := ctx.Err(); err != nil {
+			outcome, terminalStatus = "interrupted", 0
+			return nil, true, err
+		}
+		// Preserve the original provider status, headers and body. Do not
+		// reopen native retries after a 503 was admitted to this sweep.
+		resp := lastUnavailable
+		lastUnavailable = nil
+		return resp, true, nil
+	}
 	phase = 2
 	// Each Phase 2 iteration can issue at most one new HTTP request. Skip a
 	// cooldown atomically again after waiting because another request may
@@ -649,7 +687,7 @@ func (p vertexRegionRouteFork) do(original *http.Client, req *http.Request, proj
 			ready = earliest
 		}
 		if !ready.Before(waitLimit) {
-			if payGoFloor.After(now) && !payGoFloor.Before(waitLimit) {
+			if retryFloor.After(now) && !retryFloor.Before(waitLimit) {
 				outcome = "retry_hint_exceeds_budget"
 			}
 			break
@@ -680,7 +718,7 @@ func (p vertexRegionRouteFork) do(original *http.Client, req *http.Request, proj
 		lastErr = statusErr{code: http.StatusTooManyRequests, msg: "vertex approved endpoints are cooling down"}
 	}
 	// The public hint is when any approved endpoint can be tried again,
-	// subject to any request-wide PayGo hint still in effect.
+	// subject to any request-wide upstream retry hint still in effect.
 	lastErr.retryAfter = nil
 	now := p.now()
 	if delay := earliestReady(now).Sub(now); delay > 0 {
