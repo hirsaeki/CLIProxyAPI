@@ -466,10 +466,10 @@ func (p vertexRegionRouteFork) do(original *http.Client, req *http.Request, proj
 	retryableSeen := false
 	handoff := false
 	var retryFloor time.Time
-	var lastUnavailable *http.Response
+	var lastTransientResponse *http.Response
 	defer func() {
-		if lastUnavailable != nil {
-			_ = lastUnavailable.Body.Close()
+		if lastTransientResponse != nil {
+			_ = lastTransientResponse.Body.Close()
 		}
 	}()
 	var payGoReady map[string]time.Time
@@ -525,10 +525,10 @@ func (p vertexRegionRouteFork) do(original *http.Client, req *http.Request, proj
 			outcome, terminalStatus = "local_prepare_error", 0
 			return nil, false, err
 		}
-		previousUnavailable := lastUnavailable != nil
-		if previousUnavailable {
-			_ = lastUnavailable.Body.Close()
-			lastUnavailable = nil
+		previousTransientResponse := lastTransientResponse != nil
+		if previousTransientResponse {
+			_ = lastTransientResponse.Body.Close()
+			lastTransientResponse = nil
 		}
 		record(attemptReq)
 		resp, err := client.Do(attemptReq)
@@ -538,13 +538,17 @@ func (p vertexRegionRouteFork) do(original *http.Client, req *http.Request, proj
 			return resp, true, err
 		}
 		terminalStatus = resp.StatusCode
-		if phase == 1 && resp.StatusCode == http.StatusServiceUnavailable {
+		if phase == 1 && (resp.StatusCode == http.StatusBadGateway || resp.StatusCode == http.StatusServiceUnavailable) {
 			// Only advance the initial sweep to a different approved location.
 			// Do not create a shared capacity cooldown or schedule Phase 2
-			// from a 503. Save the response unchanged if the sweep ends here.
-			lastUnavailable = resp
-			outcome = "upstream_503_exhausted"
-			p.trace.attempt(location, phase, terminalStatus, "upstream_503")
+			// from a 502 or 503. Preserve the response if the sweep ends here.
+			lastTransientResponse = resp
+			result := "upstream_503"
+			if resp.StatusCode == http.StatusBadGateway {
+				result = "upstream_502"
+			}
+			outcome = result + "_exhausted"
+			p.trace.attempt(location, phase, terminalStatus, result)
 			now = p.now()
 			if delay, _ := helps.ParseRetryDelayWithHeaders(resp.Header, nil, now); delay != nil && *delay > 0 {
 				retryFloor = now.Add(*delay)
@@ -555,7 +559,7 @@ func (p vertexRegionRouteFork) do(original *http.Client, req *http.Request, proj
 			outcome = "upstream_response"
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 				outcome = "upstream_success"
-				if retryableSeen || previousUnavailable {
+				if retryableSeen || previousTransientResponse {
 					outcome = "recovered"
 				}
 			}
@@ -602,7 +606,7 @@ func (p vertexRegionRouteFork) do(original *http.Client, req *http.Request, proj
 				retryFloor = until
 			}
 		} else {
-			if previousUnavailable {
+			if previousTransientResponse {
 				outcome = "capacity_exhausted"
 			}
 			finish(now.Add(max(vertexRegionMinCooldownFork, delay)))
@@ -665,15 +669,15 @@ func (p vertexRegionRouteFork) do(original *http.Client, req *http.Request, proj
 			return resp, !handoff, err
 		}
 	}
-	if lastUnavailable != nil {
+	if lastTransientResponse != nil {
 		if err := ctx.Err(); err != nil {
 			outcome, terminalStatus = "interrupted", 0
 			return nil, true, err
 		}
 		// Preserve the original provider status, headers and body. Do not
-		// reopen native retries after a 503 was admitted to this sweep.
-		resp := lastUnavailable
-		lastUnavailable = nil
+		// reopen native retries after a 502 or 503 was admitted to this sweep.
+		resp := lastTransientResponse
+		lastTransientResponse = nil
 		return resp, true, nil
 	}
 	phase = 2
