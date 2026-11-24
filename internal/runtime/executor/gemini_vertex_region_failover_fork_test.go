@@ -494,6 +494,13 @@ func TestVertexRegionNativeManagerBoundaryFork(t *testing.T) {
 		{"unary-last-eligible", false, true, "fallback", []string{"global", "us", "eu"}},
 		{"openai-chat-last-eligible", false, true, "fallback", []string{"global", "us", "eu"}},
 		{"stream-last-eligible", true, true, "fallback", []string{"global", "us", "eu"}},
+		{"automatic-stream-429-then-503", true, true, "http-503-mixed", []string{"global", "us", "eu"}},
+		{"automatic-stream-vertex-503", true, true, "http-503-recovery", []string{"global", "us"}},
+		{"automatic-unary-vertex-503", false, true, "http-503-recovery", []string{"global", "us"}},
+		{"automatic-stream-vertex-503-exhausted", true, true, "http-503-all", []string{"global", "us", "eu"}},
+		{"automatic-stream-vertex-503-retry-after", true, true, "http-503-hint", []string{"global"}},
+		{"automatic-stream-local-auth-unavailable", true, true, "no-auth", nil},
+		{"automatic-stream-committed-503", true, true, "committed-503", []string{"global"}},
 		{"catalog-intersection", false, true, "catalog-intersection", []string{"global", "eu"}},
 		{"automatic-unary-widens-only-after-opt-in", false, true, "automatic", []string{"global", "europe-west4"}},
 		{"automatic-stream-widens-only-after-opt-in", true, true, "automatic", []string{"global", "europe-west4"}},
@@ -561,6 +568,9 @@ func TestVertexRegionNativeManagerBoundaryFork(t *testing.T) {
 			var attemptTimes []time.Time
 			var sentBody string
 			var stopped = statusErr{code: 429, msg: mockGeneric429Fork}
+			if test.mode == "committed-503" {
+				stopped = statusErr{code: 503, msg: "synthetic committed error"}
+			}
 			transport := http.DefaultTransport.(*http.Transport).Clone()
 			transport.Proxy = nil
 			defer transport.CloseIdleConnections()
@@ -641,6 +651,20 @@ func TestVertexRegionNativeManagerBoundaryFork(t *testing.T) {
 					}
 				case "quota":
 					resp.StatusCode, out = 429, `{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","message":"Quota exceeded."}}`
+				case "http-503-mixed":
+					switch location {
+					case "global":
+						resp.StatusCode, out = 429, mockCapacityFork
+					case "us":
+						resp.StatusCode, out = 503, `{"error":{"code":503,"status":"UNAVAILABLE"}}`
+					}
+				case "http-503-recovery", "http-503-all", "http-503-hint":
+					if location == "global" || test.mode == "http-503-all" {
+						resp.StatusCode, out = 503, `{"error":{"code":503,"status":"UNAVAILABLE","message":"synthetic upstream unavailable at `+location+`"}}`
+					}
+					if test.mode == "http-503-hint" {
+						resp.Header.Set("Retry-After", "20")
+					}
 				case "auth":
 					resp.StatusCode, out = 401, `{"error":{"code":401,"status":"UNAUTHENTICATED"}}`
 				case "transport-context-error":
@@ -652,7 +676,7 @@ func TestVertexRegionNativeManagerBoundaryFork(t *testing.T) {
 					_ = pipeW.CloseWithError(stopped)
 					resp.Body = pipeR
 					return resp, nil
-				case "committed":
+				case "committed", "committed-503":
 					const first = `{"candidates":[{"content":{"role":"model","parts":[{"text":"synthetic-output"}]}}]}`
 					go func() { _, _ = io.WriteString(pipeW, "data: "+first+"\n\n") }()
 					resp.Body = pipeR
@@ -684,7 +708,7 @@ func TestVertexRegionNativeManagerBoundaryFork(t *testing.T) {
 						return location == "eu" || location == "europe-west4"
 					case "automatic":
 						return location == "europe-west4"
-					case "automatic-paygo", "automatic-paygo-mixed", "automatic-paygo-exhausted":
+					case "automatic-paygo", "automatic-paygo-mixed", "automatic-paygo-exhausted", "http-503-recovery", "http-503-all", "http-503-hint", "http-503-mixed":
 						return location == "us" || location == "eu"
 					case "catalog-revoked":
 						return location == "eu" || (location == "us" && !revoked)
@@ -695,6 +719,9 @@ func TestVertexRegionNativeManagerBoundaryFork(t *testing.T) {
 			}
 			m.RegisterExecutor(exec)
 			for j, id := range []string{"primary", "other-auth"} {
+				if test.mode == "no-auth" {
+					break
+				}
 				if test.mode == "generic-outer" && j > 0 {
 					break
 				}
@@ -709,7 +736,7 @@ func TestVertexRegionNativeManagerBoundaryFork(t *testing.T) {
 						auth.Metadata[vertexlocations.ModeKeyFork] = vertexlocations.ModeOffFork
 					}
 				}
-				if j == 1 && (test.mode == "generic" || test.mode == "capacity-then-generic" || test.mode == "automatic-paygo-exhausted" || test.mode == "explicit-off-generic") {
+				if j == 1 && (test.mode == "generic" || test.mode == "capacity-then-generic" || test.mode == "automatic-paygo-exhausted" || test.mode == "explicit-off-generic" || strings.HasPrefix(test.mode, "http-503")) {
 					// Native alternative auth is deliberately outside the
 					// first account's automatic regional allowlist.
 					auth.Metadata["location"] = "europe-west4"
@@ -723,7 +750,7 @@ func TestVertexRegionNativeManagerBoundaryFork(t *testing.T) {
 				}
 				if test.mode == "generic-outer" {
 					auth.Metadata["request_retry"] = 1
-				} else if j == 0 && (test.optIn || test.mode == "generic") && test.mode != "automatic-paygo-exhausted" {
+				} else if j == 0 && (test.optIn || test.mode == "generic") && test.mode != "automatic-paygo-exhausted" && !strings.HasPrefix(test.mode, "http-503") {
 					auth.Metadata["request_retry"] = 0
 				}
 				if _, err := m.Register(ctx, auth); err != nil {
@@ -750,7 +777,7 @@ func TestVertexRegionNativeManagerBoundaryFork(t *testing.T) {
 							runErr = chunk.Err
 						}
 						out.Write(chunk.Payload)
-						if test.mode == "committed" && strings.Contains(out.String(), "synthetic-output") {
+						if (test.mode == "committed" || test.mode == "committed-503") && strings.Contains(out.String(), "synthetic-output") {
 							_ = pipeW.CloseWithError(stopped)
 						}
 					}
@@ -767,7 +794,7 @@ func TestVertexRegionNativeManagerBoundaryFork(t *testing.T) {
 				t.Fatal("native retry did not wait for the cooldown floor")
 			}
 			if test.mode == "fallback" || test.mode == "generic" || test.mode == "generic-outer" ||
-				test.mode == "catalog-intersection" || test.mode == "catalog-order" || test.mode == "catalog-revoked" || test.mode == "automatic" || test.mode == "automatic-paygo" || test.mode == "automatic-paygo-mixed" || test.mode == "explicit-off-generic" {
+				test.mode == "catalog-intersection" || test.mode == "catalog-order" || test.mode == "catalog-revoked" || test.mode == "automatic" || test.mode == "automatic-paygo" || test.mode == "automatic-paygo-mixed" || test.mode == "explicit-off-generic" || (test.mode == "http-503-recovery" || test.mode == "http-503-mixed") {
 				if runErr != nil || !strings.Contains(out.String(), "synthetic-output") {
 					t.Fatalf("output=%q err=%v", out.String(), runErr)
 				}
@@ -776,6 +803,15 @@ func TestVertexRegionNativeManagerBoundaryFork(t *testing.T) {
 			}
 			if (test.mode == "cold-catalog" || test.mode == "unknown-catalog" || test.mode == "explicit-off") && cliproxyauth.IsRequestStopError(runErr) {
 				t.Fatal("native primary semantics changed with no eligible secondary")
+			}
+			if test.mode == "http-503-all" || test.mode == "http-503-hint" {
+				last := test.want[len(test.want)-1]
+				if !cliproxyauth.IsRequestStopError(runErr) || !strings.Contains(runErr.Error(), "synthetic upstream unavailable at "+last) {
+					t.Fatalf("final Vertex 503 was not preserved or re-entered native routing: %v", runErr)
+				}
+			}
+			if test.mode == "committed-503" && !strings.Contains(out.String(), "synthetic-output") {
+				t.Fatalf("committed payload missing before the error: %q", out.String())
 			}
 			if test.mode == "automatic-paygo-exhausted" {
 				if !cliproxyauth.IsRequestStopError(runErr) {

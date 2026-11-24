@@ -128,7 +128,13 @@ between refresh ticks.
    model, endpoint or transport errors do not advance it. In legacy mode, an
    exact generic retry-later response from the first normal primary attempt
    still goes to CPA's pre-existing retry and alternate-credential policy;
-   after routing takes over, that response is terminal in legacy mode.
+   after routing takes over, that response is terminal in legacy mode. An
+   upstream HTTP 503 received before an accepted response also advances to
+   the next verified location in Phase 1. A valid HTTP `Retry-After` applies
+   within the same wait budget; when the sweep ends on 503, CPA returns that
+   upstream response and does not start Phase 2 or native retries from it.
+   A 503 does not write a shared regional cooldown. Local CPA errors, such as
+   `auth_unavailable`, are not upstream responses and cannot advance the sweep.
 2. **Phase 2:** After fully sweeping the eligible endpoints, make up to
    `min(request-retry, auth.request_retry if set, 4)` additional attempts for
    retryable refusals. This replaces CPA's outer retry and credential
@@ -159,7 +165,7 @@ subject to any remaining request-wide PayGo hint.
 Default service logs show `vertex regional HTTP attempt` for actual sends
 during failover, with region, phase (1 = sweep; 2 = retry), attempt number and
 HTTP status (0 = transport error). The attempt result distinguishes
-`generic_paygo_429` from `regional_capacity_429`.
+`upstream_503`, `generic_paygo_429`, and `regional_capacity_429`.
 `vertex regional candidate skipped` is not a send.
 `vertex regional routing finished` summarizes recovery, exhaustion, legacy
 native handoff, a hint beyond the wait budget (`retry_hint_exceeds_budget`),

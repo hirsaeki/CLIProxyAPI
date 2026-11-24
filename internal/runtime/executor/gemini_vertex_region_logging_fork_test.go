@@ -31,7 +31,9 @@ func TestVertexRegionRoutingLogsFork(t *testing.T) {
 		firstResult   string
 	}{
 		{name: "primary-success-quiet", statuses: []int{200}},
-		{name: "primary-503", outcome: "upstream_response", statuses: []int{503}, wantPhase: 1},
+		{name: "primary-502", outcome: "upstream_response", statuses: []int{502}, wantPhase: 1},
+		{name: "503-recovers", outcome: "recovered", statuses: []int{503, 200}, wantPhase: 1},
+		{name: "503-exhausted", outcome: "upstream_503_exhausted", statuses: []int{503, 503}, retries: 3, wantPhase: 1},
 		{name: "primary-transport-error", outcome: "transport_error", statuses: []int{0}, wantPhase: 1},
 		{name: "generic-hands-off", outcome: "generic_429_native_handoff", statuses: []int{429}, generic: true, wantPhase: 1, firstResult: "generic_429_native_handoff"},
 		{name: "sweep-recovers", outcome: "recovered", statuses: []int{429, 200}, wantPhase: 1, firstResult: "regional_capacity_429"},
@@ -93,7 +95,7 @@ func TestVertexRegionRoutingLogsFork(t *testing.T) {
 				}
 			}
 			resp, stop, routeErr := p.do(client, req, project, mockVertexModelFork, action, []string{"global", "us"}, tc.retries, 8*time.Second, func(*http.Request) {}, func(*http.Response, []byte) {})
-			if tc.name == "primary-503" && (routeErr != nil || resp == nil || resp.StatusCode != 503) {
+			if tc.name == "primary-502" && (routeErr != nil || resp == nil || resp.StatusCode != 502) {
 				t.Fatalf("primary error response changed: response=%v err=%v", resp, routeErr)
 			}
 			if tc.name == "primary-transport-error" && (resp != nil || routeErr == nil || !strings.Contains(routeErr.Error(), "test-private-transport-error")) {
@@ -197,4 +199,72 @@ func TestVertexRegionDiagnosticRejectsUntrustedContextIDFork(t *testing.T) {
 	if data := trace.entry().Data; data["request_id"] != nil {
 		t.Fatal("non-CPA request ID emitted")
 	}
+}
+
+func TestVertexRegion503RetryAfterAndBodyFork(t *testing.T) {
+	const project, action = "private-test-project", "generateContent"
+	for _, within := range []bool{true, false} {
+		t.Run(fmt.Sprint(within), func(t *testing.T) {
+			now := time.Unix(100, 0)
+			var waits []time.Duration
+			var attempts int
+			body := &vertex503CountingBodyFork{Reader: strings.NewReader("opaque upstream 503")}
+			p := vertexRegionRouteFork{
+				cooldown: &helps.VertexRegionCooldownFork{},
+				now:      func() time.Time { return now },
+				wait: func(_ context.Context, d time.Duration) error {
+					waits = append(waits, d)
+					now = now.Add(d)
+					return nil
+				},
+				delay: func(int) time.Duration { t.Fatal("503-only sweep entered Phase 2"); return 0 },
+			}
+			client := &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+				_ = r.Body.Close()
+				attempts++
+				if attempts == 1 {
+					return &http.Response{StatusCode: 503, Body: body, Header: http.Header{"Retry-After": []string{"2"}}}, nil
+				}
+				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("success"))}, nil
+			})}
+			req, err := http.NewRequest(http.MethodPost, vertexBaseURL("global")+vertexRegionPathFork(project, mockVertexModelFork, "global", action), strings.NewReader(mockVertexBodyFork))
+			if err != nil {
+				t.Fatal(err)
+			}
+			window := time.Second
+			if within {
+				window = 4 * time.Second
+			}
+			resp, stop, err := p.do(client, req, project, mockVertexModelFork, action, []string{"global", "us"}, 3, window, func(*http.Request) {}, func(*http.Response, []byte) {})
+			if err != nil || !stop || resp == nil {
+				t.Fatalf("route stopped=%t response=%v err=%v", stop, resp, err)
+			}
+			defer resp.Body.Close()
+			if within {
+				if attempts != 2 || resp.StatusCode != 200 || len(waits) != 1 || waits[0] != 2*time.Second || body.closed != 1 {
+					t.Fatalf("retry floor/cleanup mismatch: attempts=%d status=%d waits=%v closes=%d", attempts, resp.StatusCode, waits, body.closed)
+				}
+			} else {
+				data, err := io.ReadAll(resp.Body)
+				if attempts != 1 || resp.StatusCode != 503 || resp.Header.Get("Retry-After") != "2" ||
+					len(waits) != 0 || body.closed != 0 || string(data) != "opaque upstream 503" || err != nil {
+					t.Fatalf("did not preserve untouched 503: attempts=%d status=%d waits=%v closes=%d err=%v", attempts, resp.StatusCode, waits, body.closed, err)
+				}
+			}
+			key := helps.VertexRegionKeyFork{Project: project, Model: mockVertexModelFork, Location: "global"}
+			if ready := p.cooldown.Ready(key, now); ready.After(now) {
+				t.Fatal("503 changed shared regional cooldown")
+			}
+		})
+	}
+}
+
+type vertex503CountingBodyFork struct {
+	io.Reader
+	closed int
+}
+
+func (b *vertex503CountingBodyFork) Close() error {
+	b.closed++
+	return nil
 }
