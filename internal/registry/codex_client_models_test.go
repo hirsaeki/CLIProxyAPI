@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 
 	"github.com/MoeForge/moego/json"
@@ -28,7 +29,9 @@ func TestEmbeddedCodexClientModelsCatalogIsValid(t *testing.T) {
 	}
 }
 
-func TestEmbeddedCodexClientModelsCatalogOmitsAudioForGPT62SolAndGPT55(t *testing.T) {
+// CI also runs against the externally refreshed catalog. Check the required
+// metadata here; client-facing tests enforce that unsupported audio is filtered.
+func TestEmbeddedCodexClientModelsCatalogHasTextAndImageForGPT62SolAndGPT55(t *testing.T) {
 	data, _ := GetCodexClientModelsSnapshot()
 	var payload codexClientModelsPayload
 	if err := json.Unmarshal(data, &payload); err != nil {
@@ -48,8 +51,8 @@ func TestEmbeddedCodexClientModelsCatalogOmitsAudioForGPT62SolAndGPT55(t *testin
 			t.Fatalf("embedded catalog missing %s", slug)
 		}
 		mods, ok := model["input_modalities"].([]any)
-		if !ok || len(mods) != 2 || mods[0] != "text" || mods[1] != "image" {
-			t.Fatalf("embedded %s input_modalities = %#v, want [text image]", slug, model["input_modalities"])
+		if !ok || !slices.Contains(mods, "text") || !slices.Contains(mods, "image") {
+			t.Fatalf("embedded %s input_modalities = %#v, want both text and image", slug, model["input_modalities"])
 		}
 	}
 }
