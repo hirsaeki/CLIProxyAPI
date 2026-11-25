@@ -21,7 +21,7 @@ func nativeStoreGit(t *testing.T, dir string, args ...string) string {
 	if errLookup != nil {
 		t.Skip("native Git is required")
 	}
-	args = append([]string{"-C", dir, "-c", "user.name=Git Store Test", "-c", "user.email=git-store@example.test", "-c", "commit.gpgsign=false"}, args...)
+	args = append([]string{"-C", dir, "-c", "maintenance.auto=false", "-c", "gc.auto=0", "-c", "user.name=Git Store Test", "-c", "user.email=git-store@example.test", "-c", "commit.gpgsign=false"}, args...)
 	cmd := exec.Command(gitPath, args...)
 	out, errRun := cmd.CombinedOutput()
 	if errRun != nil {
@@ -34,6 +34,9 @@ func gitWorkspacePair(t *testing.T) (string, *GitTokenStore, *GitTokenStore) {
 	t.Helper()
 	root := t.TempDir()
 	remote := setupGitRemoteRepository(t, root, "master", testBranchSpec{name: "master", contents: "base\n"})
+	// A native push spawns receive-pack with its own repository config.
+	// Keep detached maintenance from racing TempDir cleanup.
+	nativeStoreGit(t, remote, "config", "receive.autogc", "false")
 	a := NewGitTokenStore(remote, "", "", "master")
 	b := NewGitTokenStore(remote, "", "", "master")
 	for dir, store := range map[string]*GitTokenStore{"a": a, "b": b} {
