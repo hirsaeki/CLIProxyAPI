@@ -288,6 +288,11 @@ func (e *MetaExecutor) translateMetaCompleted(ctx context.Context, req cliproxye
 		}
 	}
 
+	if raw := bytes.TrimSpace(data); ojson.ValidBytes(raw) {
+		if errEvent := metaStreamEventError(raw); errEvent != nil {
+			return metaCompletedTranslation{}, errEvent
+		}
+	}
 	if completedData, ok := metaAsCompletedEvent(data); ok {
 		if detail, okUsage := helps.ParseCodexUsage(completedData); okUsage {
 			upstreamUsage.Observe(detail, true)
@@ -505,7 +510,16 @@ func wrapMetaUpstreamError(statusCode int, body []byte) error {
 
 func metaStreamEventError(eventData []byte) error {
 	eventType := ojson.GetBytesNoCopy(eventData, "type").String()
-	if eventType != "error" && eventType != "response.failed" {
+	switch eventType {
+	case "error", "response.failed":
+	case "response.done":
+		// A terminal event is not necessarily a successful response.
+		switch strings.ToLower(strings.TrimSpace(ojson.GetBytesNoCopy(eventData, "response.status").String())) {
+		case "failed", "cancelled", "canceled":
+		default:
+			return nil
+		}
+	default:
 		return nil
 	}
 	statusCode := http.StatusBadGateway

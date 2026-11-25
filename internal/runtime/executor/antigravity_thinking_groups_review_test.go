@@ -314,7 +314,7 @@ func TestAntigravityThinkingGroupsReviewGenericFeedback(t *testing.T) {
 			if errCall := call(); errCall == nil || calls != 1 {
 				t.Fatalf("upstream failure: calls=%d err=%v", calls, errCall)
 			}
-			records := drainThinkingGroupUsage(t, capture)
+			records := collectThinkingGroupUsage(t, capture)
 			if len(records) != 1 || !records[0].Failed || records[0].Model != wantModel || records[0].Alias != "public-alias" || records[0].Fail.StatusCode != http.StatusServiceUnavailable {
 				t.Errorf("503 usage = %+v, want one %s failure preserving the alias", records, wantModel)
 			}
@@ -356,7 +356,7 @@ func TestAntigravityThinkingGroupsReviewGenericFeedback(t *testing.T) {
 			if state := current.ModelStates[high]; highCooldown.IsZero() || state == nil || !state.NextRetryAfter.Equal(highCooldown) {
 				t.Errorf("successful low attempt cleared or changed high cooldown: %+v", state)
 			}
-			if got := drainThinkingGroupUsage(t, capture); len(got) != 1 || got[0].Failed || got[0].Model != low || got[0].Alias != "public-alias" {
+			if got := collectThinkingGroupUsage(t, capture); len(got) != 1 || got[0].Failed || got[0].Model != low || got[0].Alias != "public-alias" {
 				t.Errorf("success usage = %+v, want one %s success preserving the alias", got, low)
 			}
 		})
@@ -588,6 +588,19 @@ func TestAntigravityThinkingGroupsReviewHomeCooldownAndUsage(t *testing.T) {
 	}
 	if got := drainThinkingGroupUsage(t, nextCapture); len(got) != 1 || !got[0].Failed || got[0].Model != reviewLow || got[0].Alias != "public-alias" || got[0].Fail.StatusCode != http.StatusServiceUnavailable {
 		t.Errorf("Home usage = %+v, want one real low failure preserving caller alias", got)
+	}
+}
+
+// Streaming may close its output before publishing usage. Wait for the
+// expected record before fencing the usage queue to check for duplicates.
+func collectThinkingGroupUsage(t *testing.T, capture *antigravityUsageCapture) []usage.Record {
+	t.Helper()
+	select {
+	case first := <-capture.records:
+		return append([]usage.Record{first}, drainThinkingGroupUsage(t, capture)...)
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for usage")
+		return nil
 	}
 }
 
