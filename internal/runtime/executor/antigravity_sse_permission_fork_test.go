@@ -70,14 +70,19 @@ func TestAntigravitySSEPermissionStateFork(t *testing.T) {
 				} else {
 					_, err = exec.Execute(context.Background(), auth, req, opts)
 				}
-				// Both executors already discard syntactically invalid SSE payloads.
+				var status statusErr
+				// A malformed frame is discarded. When it is the only frame, the
+				// empty stream must fail without classifying it as a ToS violation.
 				if tc.wantStatus == 0 {
-					if err != nil || antigravityInTOSPause(cfg, auth) {
-						t.Fatalf("malformed frame produced error %v or a ToS pause", err)
+					if !errors.As(err, &status) || status.StatusCode() != http.StatusBadGateway ||
+						err.Error() != "upstream stream closed with zero output" || status.tosViolation || status.credentialScoped {
+						t.Fatalf("malformed-only stream returned %#v, want a non-credential-scoped zero-output 502", err)
+					}
+					if antigravityInTOSPause(cfg, auth) {
+						t.Fatal("malformed frame triggered a ToS pause")
 					}
 					return
 				}
-				var status statusErr
 				if !errors.As(err, &status) || status.StatusCode() != tc.wantStatus || status.tosViolation != tc.wantPause || status.credentialScoped != (tc.wantPause || tc.name == "rpc_validation") {
 					t.Fatalf("got %#v, want status %d with TOS=%t", err, tc.wantStatus, tc.wantPause)
 				}
