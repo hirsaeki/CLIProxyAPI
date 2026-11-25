@@ -12,16 +12,13 @@ import (
 )
 
 func TestSnapshotAuthFileRelativeAuthDir(t *testing.T) {
-	// Keep the fixture on the working directory's volume without changing cwd.
-	authDir, errMkdirTemp := os.MkdirTemp(".", "snapshot-relative-authdir-")
-	if errMkdirTemp != nil {
-		t.Fatal(errMkdirTemp)
+	// Keep both paths on the same volume, outside the source tree that
+	// other packages inspect concurrently.
+	t.Chdir(t.TempDir())
+	const authDir = "auth"
+	if errMkdir := os.Mkdir(authDir, 0o700); errMkdir != nil {
+		t.Fatal(errMkdir)
 	}
-	t.Cleanup(func() {
-		if errRemoveAll := os.RemoveAll(authDir); errRemoveAll != nil {
-			t.Errorf("remove auth directory: %v", errRemoveAll)
-		}
-	})
 	absoluteAuthDir, errAbs := filepath.Abs(authDir)
 	if errAbs != nil {
 		t.Fatal(errAbs)
