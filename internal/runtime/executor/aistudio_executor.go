@@ -372,7 +372,7 @@ func (e *AIStudioExecutor) consumeStream(
 		defer streamUsage.Publish(ctx, reporter)
 		var streamErr error
 		defer func() {
-			_ = helps.StopTranslatedClaudeStream(ctx, &streamErr, reporter, &streamUsage, out)
+			_ = stopAIStudioTranslatedStreamFork(ctx, &streamErr, reporter, &streamUsage, out)
 		}()
 		var param any
 		var replayCommitted bool
@@ -389,7 +389,7 @@ func (e *AIStudioExecutor) consumeStream(
 		failZeroOutput := func(finishReason string) bool {
 			streamErr = newGeminiZeroOutputStatusErr(helps.GeminiZeroOutputErrorMessage(responseFormat, finishReason))
 			helps.RecordAPIResponseError(ctx, e.cfg, streamErr)
-			_ = helps.StopTranslatedClaudeStream(ctx, &streamErr, reporter, &streamUsage, out)
+			_ = stopAIStudioTranslatedStreamFork(ctx, &streamErr, reporter, &streamUsage, out)
 			return false
 		}
 		emitRelayFrame := func(frame []byte) bool {
@@ -484,7 +484,7 @@ func (e *AIStudioExecutor) consumeStream(
 			if helps.EndApplyPatchStream(ctx, param, reporter, out, statusErr{code: http.StatusBadGateway, msg: helps.ApplyPatchUpstreamErrorMessage}) {
 				return
 			}
-			if helps.StopTranslatedClaudeStream(ctx, &streamErr, reporter, &streamUsage, out) {
+			if stopAIStudioTranslatedStreamFork(ctx, &streamErr, reporter, &streamUsage, out) {
 				return
 			}
 			if ctx.Err() != nil {
@@ -504,11 +504,11 @@ func (e *AIStudioExecutor) consumeStream(
 				}
 			}
 			_ = helps.StopApplyPatchStream(ctx, param, reporter, out, statusErr{code: http.StatusBadGateway, msg: helps.ApplyPatchUpstreamErrorMessage})
-			_ = helps.StopTranslatedClaudeStream(ctx, &streamErr, reporter, &streamUsage, out)
+			_ = stopAIStudioTranslatedStreamFork(ctx, &streamErr, reporter, &streamUsage, out)
 		}
 		processEvent := func(event wsrelay.StreamEvent) bool {
 			if event.Err != nil {
-				if helps.StopTranslatedClaudeStream(ctx, &streamErr, reporter, &streamUsage, out) {
+				if stopAIStudioTranslatedStreamFork(ctx, &streamErr, reporter, &streamUsage, out) {
 					return false
 				}
 				helps.RecordAPIResponseError(ctx, e.cfg, event.Err)
@@ -618,7 +618,7 @@ func (e *AIStudioExecutor) consumeStream(
 				finishStream()
 				return false
 			case wsrelay.MessageTypeError:
-				if helps.StopTranslatedClaudeStream(ctx, &streamErr, reporter, &streamUsage, out) {
+				if stopAIStudioTranslatedStreamFork(ctx, &streamErr, reporter, &streamUsage, out) {
 					return false
 				}
 				helps.RecordAPIResponseError(ctx, e.cfg, event.Err)
@@ -667,7 +667,7 @@ func (e *AIStudioExecutor) consumeStream(
 			}
 		}
 		_ = helps.EndApplyPatchStream(ctx, param, reporter, out, statusErr{code: http.StatusBadGateway, msg: helps.ApplyPatchUpstreamErrorMessage})
-		_ = helps.StopTranslatedClaudeStream(ctx, &streamErr, reporter, &streamUsage, out)
+		_ = stopAIStudioTranslatedStreamFork(ctx, &streamErr, reporter, &streamUsage, out)
 	}(firstEvent)
 	return out
 }
