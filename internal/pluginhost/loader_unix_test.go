@@ -129,8 +129,9 @@ func TestUnixPluginReloadAfterShutdownUsesReplacedFile(t *testing.T) {
 
 	secondClient.Shutdown()
 
-	// Even unchanged bytes need a fresh native image after shutdown, so
-	// the new instance does not inherit closed package globals.
+	// Reopening without a content change must map a fresh image: native Go
+	// images stay mapped after shutdown, and reusing one would also reuse
+	// its shut-down package globals (see TestAcquireShadowPluginLoadDoesNotReuseResidentImage).
 	thirdClient, errOpenThird := dynamicLibraryLoader{}.Open(file, host)
 	if errOpenThird != nil {
 		t.Fatalf("Open() third error = %v", errOpenThird)
@@ -139,8 +140,14 @@ func TestUnixPluginReloadAfterShutdownUsesReplacedFile(t *testing.T) {
 	if !okThird {
 		t.Fatalf("Open() third client type = %T, want *dynamicLibraryClient", thirdClient)
 	}
-	if second.handle == nil || third.handle == nil || third.handle == second.handle || third.tempPath == second.tempPath {
-		t.Fatalf("reopen did not load a fresh image: second=%v third=%v", second.handle, third.handle)
+	if third.handle == nil {
+		t.Fatal("third client handle is nil")
+	}
+	if third.handle == second.handle || third.handle == firstHandle {
+		t.Fatalf("third handle = %v, must not reuse prior handles (first=%v, second=%v)", third.handle, firstHandle, second.handle)
+	}
+	if third.tempPath == second.tempPath {
+		t.Fatalf("third tempPath = %q, want distinct reload shadow copy", third.tempPath)
 	}
 	respThird, errCallThird := thirdClient.Call(context.Background(), "test.marker", nil)
 	if errCallThird != nil {
@@ -150,7 +157,7 @@ func TestUnixPluginReloadAfterShutdownUsesReplacedFile(t *testing.T) {
 		t.Fatalf("Call() third response = %q, want v2", respThird)
 	}
 	if gotCalls := testShutdownCallCount(t, thirdClient); gotCalls != baselineCalls {
-		t.Fatalf("fresh plugin inherited shutdown state: shutdown calls = %d, want %d", gotCalls, baselineCalls)
+		t.Fatalf("plugin shutdown calls = %d, want fresh image baseline %d", gotCalls, baselineCalls)
 	}
 	thirdClient.Shutdown()
 }
