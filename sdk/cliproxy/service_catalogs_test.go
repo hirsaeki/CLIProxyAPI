@@ -32,11 +32,14 @@ func TestServiceCatalogStartupAndConfigReload(t *testing.T) {
 	originalPath := writeCatalog("original.json", original)
 	first := []byte(`{"devin":[{"id":"devin/sdk-startup-regression","display_name":"SDK startup"}]}`)
 	second := []byte(`{"devin":[{"id":"devin/sdk-reload-regression","display_name":"SDK reload"}]}`)
-	cfg := &config.Config{Models: config.ModelCatalogs{
-		Catalog:      fixture("models.json"),
-		CodexCatalog: fixture("codex_client_models.json"),
-		DevinCatalog: writeCatalog("first.json", first),
-	}}
+	cfg := &config.Config{
+		SDKConfig: config.SDKConfig{ProxyURL: startRejectingBackgroundProxyFork(t)},
+		Models: config.ModelCatalogs{
+			Catalog:      fixture("models.json"),
+			CodexCatalog: fixture("codex_client_models.json"),
+			DevinCatalog: writeCatalog("first.json", first),
+		},
+	}
 	s := &Service{cfg: cfg}
 	ctx, cancel := context.WithCancel(context.Background())
 	notifications := make(chan struct{}, 8)

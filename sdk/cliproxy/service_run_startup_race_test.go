@@ -41,8 +41,11 @@ func TestServiceRun_WatcherReloadConcurrentWithStartupModelRegistration_Issue658
 		t.Fatalf("write dummy config: %v", errWrite)
 	}
 
+	backgroundProxy := startRejectingBackgroundProxyFork(t)
 	initialCfg := &config.Config{
+		Models: localServiceTestCatalogsFork(t),
 		SDKConfig: config.SDKConfig{
+			ProxyURL:         backgroundProxy,
 			ForceModelPrefix: false,
 		},
 		Host:    "127.0.0.1",
@@ -63,7 +66,9 @@ func TestServiceRun_WatcherReloadConcurrentWithStartupModelRegistration_Issue658
 	}
 
 	updatedCfg := &config.Config{
+		Models: localServiceTestCatalogsFork(t),
 		SDKConfig: config.SDKConfig{
+			ProxyURL:         backgroundProxy,
 			ForceModelPrefix: true,
 		},
 		Host:    "127.0.0.1",
