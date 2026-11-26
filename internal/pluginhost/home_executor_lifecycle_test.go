@@ -138,8 +138,7 @@ func TestHomeExecutorDispatchLifecycleRejections(t *testing.T) {
 				manager.SetHomePluginExecutorResolver(host)
 				manager.SetRetryConfig(2, 0, 2)
 				auth := homeExecutorTestAuth("selected-token", "existing-project", time.Now().Add(time.Hour))
-				// Delayed usage from other tests shares the process-wide queue.
-				auth.ID = t.Name()
+				auth.ID = fmt.Sprintf("%s-%d", t.Name(), testUsageBarrierID.Add(1))
 				dispatcher := &homeExecutorTestDispatcher{payload: homeExecutorDispatchJSON(t, auth, homePluginID)}
 				registry := executionregistry.New()
 				var releases int
