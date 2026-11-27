@@ -584,7 +584,7 @@ func (h *Host) callHostContextDone(ctx context.Context, request []byte) ([]byte,
 	if errUnmarshal := json.Unmarshal(request, &req); errUnmarshal != nil {
 		return nil, fmt.Errorf("decode host context done request: %w", errUnmarshal)
 	}
-	targetCtx, _, exists, errResolve := h.resolveOwnedCallbackContext(ctx, req.HostCallbackID)
+	targetCtx, closedCh, exists, errResolve := h.resolveOwnedCallbackContext(ctx, req.HostCallbackID)
 	if errResolve != nil {
 		return nil, errResolve
 	}
@@ -602,7 +602,16 @@ func (h *Host) callHostContextDone(ctx context.Context, request []byte) ([]byte,
 			Error:  errCtx.Error(),
 		})
 	}
-	return marshalRPCResult(pluginapi.HostContextDoneResponse{Done: false})
+	select {
+	case <-closedCh:
+		return marshalRPCResult(pluginapi.HostContextDoneResponse{
+			Done:   true,
+			Reason: "closed",
+			Error:  "host callback context is closed",
+		})
+	default:
+		return marshalRPCResult(pluginapi.HostContextDoneResponse{Done: false})
+	}
 }
 
 func (h *Host) callHostContextWait(ctx context.Context, request []byte) ([]byte, error) {
