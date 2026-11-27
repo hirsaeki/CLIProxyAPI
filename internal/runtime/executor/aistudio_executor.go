@@ -338,10 +338,28 @@ func (e *AIStudioExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth
 		return nil, statusErr{code: firstEvent.Status, msg: errBody.String()}
 	}
 	replayAccumulator := newAntigravityReasoningReplayAccumulator(body.replayScope, body.replayRequestPayload)
+	out := e.consumeStream(ctx, cancelStream, req, opts, body, translatedReq, reporter, replayAccumulator, firstEvent, wsStream)
+	return &cliproxyexecutor.StreamResult{Headers: firstEvent.Headers.Clone(), Chunks: out}, nil
+}
+
+func (e *AIStudioExecutor) consumeStream(
+	ctx context.Context,
+	cancelStream context.CancelFunc,
+	req cliproxyexecutor.Request,
+	opts cliproxyexecutor.Options,
+	body translatedPayload,
+	translatedReq []byte,
+	reporter *helps.UsageReporter,
+	replayAccumulator *antigravityReasoningReplayAccumulator,
+	firstEvent wsrelay.StreamEvent,
+	wsStream <-chan wsrelay.StreamEvent,
+) <-chan cliproxyexecutor.StreamChunk {
 	out := make(chan cliproxyexecutor.StreamChunk, 1)
 	go func(first wsrelay.StreamEvent) {
 		defer close(out)
-		defer cancelStream()
+		if cancelStream != nil {
+			defer cancelStream()
+		}
 		defer reporter.EnsurePublished(ctx)
 		responseFormat := cliproxyexecutor.ResponseFormatOrSource(opts)
 		originalRequest := opts.OriginalRequest
@@ -354,7 +372,7 @@ func (e *AIStudioExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth
 		defer streamUsage.Publish(ctx, reporter)
 		var streamErr error
 		defer func() {
-			_ = helps.StopTranslatedClaudeStream(ctx, &streamErr, reporter, &streamUsage, out)
+			_ = stopAIStudioTranslatedStreamFork(ctx, &streamErr, reporter, &streamUsage, out)
 		}()
 		var param any
 		var replayCommitted bool
@@ -371,7 +389,7 @@ func (e *AIStudioExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth
 		failZeroOutput := func(finishReason string) bool {
 			streamErr = newGeminiZeroOutputStatusErr(helps.GeminiZeroOutputErrorMessage(responseFormat, finishReason))
 			helps.RecordAPIResponseError(ctx, e.cfg, streamErr)
-			_ = helps.StopTranslatedClaudeStream(ctx, &streamErr, reporter, &streamUsage, out)
+			_ = stopAIStudioTranslatedStreamFork(ctx, &streamErr, reporter, &streamUsage, out)
 			return false
 		}
 		emitRelayFrame := func(frame []byte) bool {
@@ -466,7 +484,7 @@ func (e *AIStudioExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth
 			if helps.EndApplyPatchStream(ctx, param, reporter, out, statusErr{code: http.StatusBadGateway, msg: helps.ApplyPatchUpstreamErrorMessage}) {
 				return
 			}
-			if helps.StopTranslatedClaudeStream(ctx, &streamErr, reporter, &streamUsage, out) {
+			if stopAIStudioTranslatedStreamFork(ctx, &streamErr, reporter, &streamUsage, out) {
 				return
 			}
 			if ctx.Err() != nil {
@@ -486,11 +504,11 @@ func (e *AIStudioExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth
 				}
 			}
 			_ = helps.StopApplyPatchStream(ctx, param, reporter, out, statusErr{code: http.StatusBadGateway, msg: helps.ApplyPatchUpstreamErrorMessage})
-			_ = helps.StopTranslatedClaudeStream(ctx, &streamErr, reporter, &streamUsage, out)
+			_ = stopAIStudioTranslatedStreamFork(ctx, &streamErr, reporter, &streamUsage, out)
 		}
 		processEvent := func(event wsrelay.StreamEvent) bool {
 			if event.Err != nil {
-				if helps.StopTranslatedClaudeStream(ctx, &streamErr, reporter, &streamUsage, out) {
+				if stopAIStudioTranslatedStreamFork(ctx, &streamErr, reporter, &streamUsage, out) {
 					return false
 				}
 				helps.RecordAPIResponseError(ctx, e.cfg, event.Err)
@@ -600,7 +618,7 @@ func (e *AIStudioExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth
 				finishStream()
 				return false
 			case wsrelay.MessageTypeError:
-				if helps.StopTranslatedClaudeStream(ctx, &streamErr, reporter, &streamUsage, out) {
+				if stopAIStudioTranslatedStreamFork(ctx, &streamErr, reporter, &streamUsage, out) {
 					return false
 				}
 				helps.RecordAPIResponseError(ctx, e.cfg, event.Err)
@@ -621,22 +639,37 @@ func (e *AIStudioExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth
 				return
 			}
 		}
-		if ctx.Err() == nil && zeroOutputGuard.HasAbnormalFinish() {
-			_, action, finishReason := zeroOutputGuard.Finalize()
-			if action == helps.GeminiZeroOutputEmitErrorThenFail {
+		if ctx.Err() == nil {
+			if !processRelayFrames(relayFrames.Finish()) {
+				return
+			}
+			shells, action, finishReason := zeroOutputGuard.Finalize()
+			switch action {
+			case helps.GeminiZeroOutputFailNow:
+				failZeroOutput(finishReason)
+				return
+			case helps.GeminiZeroOutputEmitErrorThenFail:
 				errFrame := zeroOutputGuard.AbnormalFrame()
 				if len(errFrame) == 0 {
 					errFrame = []byte("[DONE]")
 				}
-				_ = emitRelayFrame(errFrame)
+				if !emitRelayFrame(errFrame) {
+					return
+				}
+				failZeroOutput(finishReason)
+				return
+			default:
+				for _, shell := range shells {
+					if !emitRelayFrame(shell) {
+						return
+					}
+				}
 			}
-			failZeroOutput(finishReason)
-			return
 		}
 		_ = helps.EndApplyPatchStream(ctx, param, reporter, out, statusErr{code: http.StatusBadGateway, msg: helps.ApplyPatchUpstreamErrorMessage})
-		_ = helps.StopTranslatedClaudeStream(ctx, &streamErr, reporter, &streamUsage, out)
+		_ = stopAIStudioTranslatedStreamFork(ctx, &streamErr, reporter, &streamUsage, out)
 	}(firstEvent)
-	return &cliproxyexecutor.StreamResult{Headers: firstEvent.Headers.Clone(), Chunks: out}, nil
+	return out
 }
 
 // CountTokens counts tokens for the given request using the AI Studio API.

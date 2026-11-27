@@ -510,7 +510,13 @@ func TestNewLifetimePreservesClusterFailoverState(t *testing.T) {
 }
 
 func TestEnsureClientsWaitsForPreviousTargetClose(t *testing.T) {
-	client := New(config.HomeConfig{Enabled: true, Host: "next.example.com", Port: 8327})
+	listener, errListen := net.Listen("tcp", "127.0.0.1:0")
+	if errListen != nil {
+		t.Fatal(errListen)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	client := New(config.HomeConfig{Enabled: true, Host: "127.0.0.1", Port: listener.Addr().(*net.TCPAddr).Port})
+	t.Cleanup(client.Close)
 	closing := make(chan struct{})
 	client.closing = closing
 	done := make(chan error, 1)
@@ -532,7 +538,6 @@ func TestEnsureClientsWaitsForPreviousTargetClose(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("ensureClients() did not continue after previous target closed")
 	}
-	client.Close()
 }
 
 func TestConcurrencyReleaseDoesNotOpenBeforeMembershipReady(t *testing.T) {

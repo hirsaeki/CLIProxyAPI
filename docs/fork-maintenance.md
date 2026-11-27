@@ -76,7 +76,7 @@ them must stay local to the listed responsibility.
 | `internal/registry/model_updater.go` | Apply the local Google model overlay when loading the startup catalog |
 | `internal/registry/catalog_sources.go` | Apply the same overlay before change detection and publication for refreshed catalog sources |
 | `sdk/cliproxy/service.go` | Immutable OAuth availability state fields only |
-| `sdk/cliproxy/auth/conductor_lifecycle.go` | Reject stale new registrations using upstream canonical file provenance inside the existing per-auth mutation gate |
+| `sdk/cliproxy/auth/conductor_lifecycle.go` | Preserve canonical file provenance validation for direct `Manager.Register` callers, even though the watcher now uses upstream's conditional registration path |
 | `sdk/cliproxy/service_auth.go` | Use the committed/current auth returned by manager reconciliation |
 | `sdk/cliproxy/builder.go` | Load and inject the startup availability snapshot |
 | `sdk/cliproxy/service_config.go` | Warn when a startup-only availability path changes |
@@ -503,12 +503,14 @@ create spurious updates or reject current snapshots. The fork's
 `SetSourceFileSnapshot` API delegates to upstream `BindFileSnapshot` for compatibility.
 The redundant `auth/types.go` and synthesizer production deltas are removed.
 
-Upstream does not validate new registrations before committing. Keep the narrow
-`Manager.Register` guard under the existing per-auth mutation gate, before
-generation/registration-epoch changes or persistence. It uses upstream
-`FileSnapshotMatchesDisk` and preserves the current auth (or absence) when a
-source is changed, missing or unreadable. Both new and existing registrations
-accept formatting-only rewrites. Runtime commits clear the observation marker.
+Use upstream's `RegisterFileSnapshotIfAbsent` for watcher-driven new auths.
+It checks existence and file freshness under one mutation gate, returning the
+current auth for update if a registration raced, or requesting a reread through
+the service when a stale snapshot is discarded. Direct `Manager.Register`
+callers still need the fork's freshness guard under the same gate, before
+generation/registration-epoch changes or persistence. Both paths use upstream
+`FileSnapshotMatchesDisk` and accept formatting-only rewrites. Runtime commits
+clear the observation marker.
 
 Service model registration uses the manager's returned committed/current snapshot,
 including rejected updates. Executor binding occurs only after reconciliation,
@@ -522,7 +524,7 @@ serializes manager-mediated changes for the same auth; it does not lock out
 arbitrary external file writers. Regressions cover real save ordering, accounting,
 clone/serialization behavior, canonical formatting equivalence, and
 full-scan/single-file/plugin synthesis paths. Retire the remaining Register seam
-when upstream adds equivalent registration validation.
+when upstream adds equivalent validation to direct registration.
 
 ## Claude SSE event bounds
 

@@ -91,9 +91,11 @@ func TestServiceRun_ShutdownContextFreshAtExit(t *testing.T) {
 
 	authDir := t.TempDir()
 	cfg := &config.Config{
-		Host:    "127.0.0.1",
-		Port:    port,
-		AuthDir: authDir,
+		SDKConfig: config.SDKConfig{ProxyURL: startRejectingBackgroundProxyFork(t)},
+		Models:    localServiceTestCatalogsFork(t),
+		Host:      "127.0.0.1",
+		Port:      port,
+		AuthDir:   authDir,
 	}
 
 	cfgPath := filepath.Join(authDir, "config.yaml")

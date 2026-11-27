@@ -236,34 +236,52 @@ func (m *Manager) wrapStreamResultWithCancel(ctx context.Context, auth *Auth, pr
 		var failed bool
 		var sawCompleted bool
 		var sawIncomplete bool
+		var forwardedPayload bool
 		forward := true
 		var rewriter *StreamRewriter
 		if aliasResult.ForceMapping && strings.TrimSpace(aliasResult.OriginalAlias) != "" {
 			rewriter = NewStreamRewriter(StreamRewriteOptions{RewriteModel: aliasResult.OriginalAlias})
 		}
+		recordFailure := func(resultCtx context.Context, err error) (string, bool) {
+			entry := logEntryWithRequestID(resultCtx)
+			warnLogUpstreamFailure(resultCtx, entry, provider, resultModel, auth, time.Since(streamStart), err)
+			rerr := resultErrorFromError(err)
+			action, okAction := matchRequestScopedErrorAction(auth, err, m.requestScopedErrorConfig(resultCtx))
+			result := Result{AuthID: auth.ID, Provider: provider, Model: resultModel, RouteModel: routeModel, Success: false, Error: rerr, Options: opts, AccessToken: accessToken, CredentialVersion: auth.CredentialVersion, RegistrationEpoch: auth.RegistrationEpoch, ExecutionSeq: executionSeq}
+			result.RetryAfter = retryAfterFromError(err)
+			result.CredentialScope = isCredentialScopedError(err)
+			applyRequestScopedActionToResult(action, okAction, &result)
+			m.recordExecutionResult(resultCtx, result, auth, ephemeralResult)
+			return action, okAction
+		}
+		drainCanceled := func() {
+			if !forwardedPayload || failed || ctx.Err() == nil {
+				discardStreamChunks(remaining)
+				return
+			}
+			resultCtx := context.WithoutCancel(ctx)
+			drainObservedStreamFailureFork(remaining, func(err error) {
+				recordFailure(resultCtx, err)
+			})
+		}
 		emit := func(chunk cliproxyexecutor.StreamChunk) bool {
 			if chunk.Err != nil && !failed {
+				resultCtx := ctx
 				if ctxErr := ctx.Err(); ctxErr != nil {
 					if retryAfterFromError(chunk.Err) != nil {
 						m.recordCanceledUpstreamCooldown(ctx, auth, provider, resultModel, routeModel, opts, chunk.Err, ephemeralResult, executionSeq)
 						failed = true
 						return false
 					}
-					if !isRequestScopedError(chunk.Err) {
+					if forwardedPayload && retainObservedStreamFailureFork(chunk.Err) {
+						resultCtx = context.WithoutCancel(ctx)
+					} else if !isRequestScopedError(chunk.Err) {
 						failed = true
 						return false
 					}
 				}
 				failed = true
-				entry := logEntryWithRequestID(ctx)
-				warnLogUpstreamFailure(ctx, entry, provider, resultModel, auth, time.Since(streamStart), chunk.Err)
-				rerr := resultErrorFromError(chunk.Err)
-				action, okAction := matchRequestScopedErrorAction(auth, chunk.Err, m.requestScopedErrorConfig(ctx))
-				result := Result{AuthID: auth.ID, Provider: provider, Model: resultModel, RouteModel: routeModel, Success: false, Error: rerr, Options: opts, AccessToken: accessToken, CredentialVersion: auth.CredentialVersion, RegistrationEpoch: auth.RegistrationEpoch, ExecutionSeq: executionSeq}
-				result.RetryAfter = retryAfterFromError(chunk.Err)
-				result.CredentialScope = isCredentialScopedError(chunk.Err)
-				applyRequestScopedActionToResult(action, okAction, &result)
-				m.recordExecutionResult(ctx, result, auth, ephemeralResult)
+				action, okAction := recordFailure(resultCtx, chunk.Err)
 				if okAction && !isRequestTerminatedError(chunk.Err) && !isRequestStopError(chunk.Err) && !isTOSViolationError(chunk.Err) {
 					if isRequestScopedStop(action, okAction) {
 						chunk.Err = wrapRequestStopError(chunk.Err)
@@ -319,6 +337,7 @@ func (m *Manager) wrapStreamResultWithCancel(ctx context.Context, auth *Auth, pr
 			chunk.Payload = payload
 			if ctx == nil {
 				out <- chunk
+				forwardedPayload = true
 				return true
 			}
 			select {
@@ -326,6 +345,7 @@ func (m *Manager) wrapStreamResultWithCancel(ctx context.Context, auth *Auth, pr
 				forward = false
 				return false
 			case out <- chunk:
+				forwardedPayload = true
 				return true
 			}
 		}
@@ -337,7 +357,7 @@ func (m *Manager) wrapStreamResultWithCancel(ctx context.Context, auth *Auth, pr
 				if cancelAttempt != nil {
 					cancelAttempt()
 				}
-				discardStreamChunks(remaining)
+				drainCanceled()
 				return
 			}
 		}
@@ -357,7 +377,7 @@ func (m *Manager) wrapStreamResultWithCancel(ctx context.Context, auth *Auth, pr
 						if cancelAttempt != nil {
 							cancelAttempt()
 						}
-						discardStreamChunks(remaining)
+						drainCanceled()
 						return
 					case chunk, open = <-remaining:
 					}
@@ -375,7 +395,7 @@ func (m *Manager) wrapStreamResultWithCancel(ctx context.Context, auth *Auth, pr
 				if cancelAttempt != nil {
 					cancelAttempt()
 				}
-				discardStreamChunks(remaining)
+				drainCanceled()
 				return
 			}
 		}
@@ -473,7 +493,19 @@ func geminiCandidatesCompletionFlags(candidates []any) (completed, incomplete bo
 	return completed, incomplete
 }
 
+func isInteractionsIncompleteFinishReason(finishReason string) bool {
+	switch strings.ToLower(strings.TrimSpace(finishReason)) {
+	case "length", "max_tokens", "max_output_tokens", "content_filter", "safety", "recitation":
+		return true
+	}
+	return false
+}
+
 func jsonObjectCompletionFlags(rawJSON []byte) (completed, incomplete bool) {
+	return jsonObjectCompletionFlagsWithInteractions(rawJSON, true)
+}
+
+func jsonObjectCompletionFlagsWithInteractions(rawJSON []byte, includeInteractionsSSE bool) (completed, incomplete bool) {
 	var obj map[string]any
 	if err := json.Unmarshal(rawJSON, &obj); err != nil || len(obj) == 0 {
 		return false, false
@@ -483,6 +515,13 @@ func jsonObjectCompletionFlags(rawJSON []byte) (completed, incomplete bool) {
 	}
 	eventType, _ := obj["type"].(string)
 	eventType = strings.TrimSpace(eventType)
+	usedEventTypeField := false
+	if includeInteractionsSSE && eventType == "" {
+		if interactionEventType, ok := obj["event_type"].(string); ok {
+			eventType = strings.TrimSpace(interactionEventType)
+			usedEventTypeField = eventType != ""
+		}
+	}
 	status, _ := obj["status"].(string)
 	status = strings.ToLower(strings.TrimSpace(status))
 	respObj, hasRespObj := obj["response"].(map[string]any)
@@ -494,18 +533,66 @@ func jsonObjectCompletionFlags(rawJSON []byte) (completed, incomplete bool) {
 			status = strings.ToLower(strings.TrimSpace(respStatus))
 		}
 	}
+	isInteraction := false
+	if includeInteractionsSSE {
+		if obj["incomplete_details"] != nil {
+			incomplete = true
+		}
+		objectType, _ := obj["object"].(string)
+		objectType = strings.ToLower(strings.TrimSpace(objectType))
+		interactionObj, hasInteractionObj := obj["interaction"].(map[string]any)
+		isInteraction = hasInteractionObj || objectType == "interaction"
+		if hasInteractionObj {
+			if interactionObj["error"] != nil || interactionObj["incomplete_details"] != nil {
+				incomplete = true
+			}
+			if interactionStatus, _ := interactionObj["status"].(string); strings.TrimSpace(interactionStatus) != "" {
+				status = strings.ToLower(strings.TrimSpace(interactionStatus))
+			}
+			if fr, okFR := interactionObj["finish_reason"].(string); okFR && isInteractionsIncompleteFinishReason(fr) {
+				incomplete = true
+			}
+		}
+		if isInteraction || strings.HasPrefix(eventType, "interaction.") || (usedEventTypeField && eventType == "finish") {
+			if fr, okFR := obj["finish_reason"].(string); okFR && isInteractionsIncompleteFinishReason(fr) {
+				incomplete = true
+			}
+		}
+	}
 	switch status {
 	case "incomplete", "failed", "cancelled", "canceled":
 		return false, true
+	case "completed", "requires_action":
+		if isInteraction {
+			completed = true
+		}
 	}
 	switch eventType {
 	case "response.incomplete", "response.failed", "response.cancelled", "response.canceled", "error":
 		return false, true
+	case "interaction.incomplete", "interaction.failed", "interaction.cancelled", "interaction.canceled":
+		if includeInteractionsSSE {
+			return false, true
+		}
 	case "response.completed", "response.done", "message_stop":
 		if status == "" || status == "completed" {
 			return true, incomplete
 		}
 		return false, true
+	case "interaction.completed", "interaction.complete", "interaction.done":
+		if includeInteractionsSSE {
+			if status == "" || status == "completed" || status == "requires_action" {
+				return true, incomplete
+			}
+			return false, true
+		}
+	case "finish":
+		if includeInteractionsSSE && usedEventTypeField {
+			if status == "" || status == "completed" || status == "requires_action" {
+				return true, incomplete
+			}
+			return false, true
+		}
 	case "message_delta":
 		if deltaObj, ok := obj["delta"].(map[string]any); ok {
 			if sr, okSR := deltaObj["stop_reason"].(string); okSR {
@@ -572,7 +659,7 @@ func isCompletedExecutionPayload(payload []byte) bool {
 	if obj["error"] != nil || obj["incomplete_details"] != nil {
 		return false
 	}
-	comp, incomp := jsonObjectCompletionFlags(trimmed)
+	comp, incomp := jsonObjectCompletionFlagsWithInteractions(trimmed, false)
 	if incomp {
 		return false
 	}
@@ -765,6 +852,7 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 		errStream = markUpstreamExecutionAttemptFromContext(attemptCtx, errStream)
 		if errStream != nil {
 			abandonAttempt(streamResult)
+			recordAntigravityAttemptedModelFromAttempt(ctx, execCtx, provider, auth.ID, resultModel, errStream)
 			rerr := resultErrorFromError(errStream)
 			action, okAction := matchRequestScopedErrorAction(auth, errStream, m.requestScopedErrorConfig(execCtx))
 			result := Result{AuthID: auth.ID, Provider: provider, Model: resultModel, RouteModel: routeModel, Success: false, Error: rerr, Options: execOpts, AccessToken: accessToken, CredentialVersion: auth.CredentialVersion, RegistrationEpoch: auth.RegistrationEpoch, ExecutionSeq: executionSeq}
@@ -886,6 +974,7 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 		}
 		if bootstrapErr != nil {
 			abandonAttempt(streamResult)
+			recordAntigravityAttemptedModelFromAttempt(ctx, execCtx, provider, auth.ID, resultModel, bootstrapErr)
 			if !hasUpstreamExecutionAttempt(bootstrapErr) {
 				if preRefreshBootstrapErr != nil {
 					syncPreferredUpstreamError(&upstreamErr, newStreamBootstrapError(preRefreshBootstrapErr, preRefreshBootstrapHeaders))
@@ -986,6 +1075,7 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 				discardStreamChunks(streamResult.Chunks)
 			}
 			emptyErr := markUpstreamExecutionAttemptFromContext(attemptCtx, &Error{Code: "empty_stream", Message: "upstream stream closed before first payload", Retryable: true})
+			recordAntigravityAttemptedModelFromAttempt(ctx, execCtx, provider, auth.ID, resultModel, emptyErr)
 			currentErr := newStreamBootstrapError(emptyErr, streamResult.Headers)
 			if hasUpstreamExecutionAttempt(emptyErr) {
 				syncPreferredUpstreamError(&upstreamErr, currentErr)

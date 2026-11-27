@@ -167,9 +167,9 @@ func TestSourceFileSnapshotExecutorRegistrationUsesReconciledAuthFork(t *testing
 			}
 			prepared := service.prepareCoreAuthForModelRegistration(ctx, incoming)
 			_, hasIncomingExecutor := manager.Executor("claude")
-			if mode == "rejected-update" {
+			if mode == "rejected-update" || mode == "rejected-add" {
 				if reread == nil || !reread.SameFileSnapshot(incoming) {
-					t.Fatal("rejected update did not request rereading the discarded snapshot")
+					t.Fatal("rejected input did not request rereading the discarded snapshot")
 				}
 			} else if reread != nil {
 				t.Fatal("accepted or generation-stale auth unexpectedly requested a snapshot reread")
